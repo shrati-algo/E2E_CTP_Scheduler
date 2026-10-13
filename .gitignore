@@ -36,6 +36,19 @@
 !/latest_schedule/BUSINESS_RULES_LOG.md
 !/latest_schedule/ASSUMPTIONS_LOG.md
 
+# v98 result summaries (user 2026-10-14); full schedule workbook, row-level evidence and run_log stay out
+!/latest_schedule/v98/DAILY_NUMBERS_v98.md
+!/latest_schedule/v98/DAILY_NUMBERS_v98.xlsx
+!/latest_schedule/v98/README_v98.md
+!/latest_schedule/v98/CEILING_v98.txt
+!/latest_schedule/v98/RULE_ADHERENCE_REPORT_v98.xlsx
+!/latest_schedule/v98/DATA_GAPS_DIPS_UTILISATION_v98.xlsx
+
+# more docs (user 2026-10-14)
+!/latest_schedule/*.md
+!/latest_schedule/plant-schedule/*.md
+!/knowledge/docs/*.md
+
 # always out, even if a rule above matches
 db_pipeline/.env
 .env
