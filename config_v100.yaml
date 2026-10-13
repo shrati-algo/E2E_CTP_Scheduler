@@ -1,0 +1,2325 @@
+# ##############################################################################
+# ##                                                                          ##
+# ##   !!  THIS CONFIG IS **NOT** v6's DEFAULT.  !!                           ##
+# ##                                                                          ##
+# ##   The SHIPPED PIPELINE IS NOT v6. Three tuning keys below are set to     ##
+# ##   values that are NOT what v6 runs with. They are listed in full in      ##
+# ##   the DEVIATION TABLE immediately underneath. Anyone who says "this is   ##
+# ##   just v6 on CTP data" is WRONG until they have read that table.         ##
+# ##                                                                          ##
+# ##############################################################################
+#
+# ==============================================================================
+# DEVIATION TABLE -- every key whose SHIPPED value differs from v6's BEHAVIOUR
+# ==============================================================================
+# (Behaviour, not config: for two of these three, v6 has no config key at all --
+#  the number is hard-coded or computed inline in the phase. "v6's value" below
+#  means "what v6 actually runs with", which is the only thing that matters.)
+#
+#   KEY                          SHIPPED   v6's VALUE          WHAT IT WAS MEASURED TO BUY
+#   ---------------------------  --------  ------------------  ---------------------------------
+#   building_month_cap_h         480       669.6               building peak 637.2 h
+#                                          (31*24*0.90,          (v6's 669.6 -> peak 690.4 h)
+#                                           computed inline)   !! SEE THE WARNING BELOW !!
+#
+#   green_tyre_max_age_h         24        72                  a TIGHTER build-to-cure window.
+#                                          (hard-coded in      24 h is THE PLANT'S NUMBER,
+#                                           phase5             confirmed TWICE: aging_master.csv
+#                                           AGE_OVERRIDE_H)    and the plant's own aging-table
+#                                                              image. v6's 72 is a v6 number,
+#                                                              not a CTP number.
+#
+#   seed_kitpool_from_inventory  true      false               makespan 21.7 h SHORTER than false.
+#                                          ("the pool starts   Lets phase6 see opening WIP that
+#                                           empty")            PHYSICALLY EXISTS on the floor.
+#
+# !! building_month_cap_h -- M-6 CORRECTION (2026-07-27): the LIVE value is **648.0** (line 351,
+#    = 30 x 24 x 0.90 for a 30-day June), NOT 480. This paragraph and the balance-analysis block
+#    below were written against an earlier 480 and are STALE -- the balancer's measured tradeoffs
+#    (spread 49->13.9, peak 637.2, makespan 35.45d, etc.) were taken at cap=480 and no longer
+#    describe the live 648 behaviour. phase5 reads BUILDING_MONTH_CAP_H = 648. Re-measure the
+#    balancer at 648 if you rely on those numbers. (Original 480 note kept below for history.)
+#
+# ------------------------------------------------------------------------------
+# TO REPRODUCE v6's BEHAVIOUR EXACTLY: flip these three keys to these values.
+# ------------------------------------------------------------------------------
+#   building_month_cap_h:          669.6   # = 31 * 24 * 0.90, v6's inline computation
+#   green_tyre_max_age_h:          72      # v6's AGE_OVERRIDE_H = {"GREEN TYRES": (0.0, 72.0)}
+#   seed_kitpool_from_inventory:   false   # v6's rule: the kit pool starts EMPTY
+#
+#   Everything else in this file is EITHER v6's own value OR a CTP DATA ADAPTATION
+#   (routing_overrides, pieces_per_cut, aging_fallback_by_itemtype, itemtype_overrides,
+#   excluded_items, machine_to_changeover_line). Those are a DIFFERENT CLASS: they are
+#   plant-confirmed corrections to WRONG OR MISSING DATA, not tuning knobs, and they are
+#   each documented at their own key. They are NOT part of "flip these to get v6".
+#
+#   !! DO NOT ADD a `--v6-defaults` CLI FLAG. It would be a LIE. Each phase opens
+#      config.yaml ITSELF (`yaml.safe_load(open(ROOT/"config.yaml"))`) as a separate
+#      subprocess -- run_pipeline.py cannot inject anything into them without REWRITING
+#      THIS FILE ON DISK. Editing the three lines above is the honest mechanism, so that
+#      is the mechanism. The block above is copy-pasteable.
+#
+# ==============================================================================
+# ctp_v6 -- CTP (PCR) scheduler running the v6_wave_p2 algorithm.
+#
+# `phases/*.py` STARTED as byte-identical copies of v6_wave_p2/phases/*.py. They are NOT
+# byte-identical any more -- this is the v2 tree and it carries deliberate (A) DEFECT
+# fixes (see the v2 FIX FLAGS block below, and the header of each phase). The ALGORITHM
+# is v6's; the corrections are inside it.
+#
+# Every v6 TUNING value below is v6's OWN config value -- never the `cfg.get(key, default)`
+# fallback found in its code (those fallbacks are 168/168/72 and are NOT what v6 runs with)
+# -- EXCEPT the three keys in the DEVIATION TABLE above, which are deliberate and flagged.
+#
+# CTP-specific facts live in MEMORY.md. Read it before changing anything here.
+
+# ---------------------------------------------------------------- data source
+# v6 defaults to `db`. CTP has no DB; everything is file-based.
+data_source: csv    # 2026-08-03: live jkplanning_CTP unreachable from here -> read the bundled DB-table exports (ctp_inputfiles/jkt_*.xlsx). Revert to 'db' when the DB is reachable.
+db_plan: false
+# ==== BUILDING-PLAN ECHO (2026-07-29) — see plan peaceful-cuddling-newell.md ==========================
+# ON: the plant's BUILDING plan (inputs/building_plan.csv) is the demand ROOT and a pinned TBM echo --
+#   phase1b explodes component demand from it, and phase5 builds each green tyre on the plan's TBM at the
+#   plan's time (sliding later only if a component is late), instead of DERIVING placement. Curing
+#   (phase6) stays a pinned press echo but only CONSUMES. OFF: today's curing-only pipeline, byte-identical.
+building_plan_echo: true         # building-drum (btoc June)
+expected_plan_month: "2026-09"   # H-4 guard: fail loudly if the plan month is not June 2026
+zero_opening_wip: false
+# Curing representation (added 2026-07-25 for D9/L11 coverage checks). TURNED OFF per user.
+emit_curing_demand_rows:        false   # phase1b: no curing demand rows
+emit_curing_representation_lots: false  # phase2: no curing representation lots
+# CTP #41 (2026-07-26): prune the component sub-tree of WIP-FED SKUs (green tyre comes from
+# opening WIP / has no build routing, so it is NEVER built). v6/today explodes their full
+# BOM anyway -> ~168,629 units of ply/bead/liner built for tyres that arrive from WIP + the
+# disconnected V10 orphans. ON = phase1b emits NO component demand for those SKUs (per-SKU,
+# so shared components keep every built SKU's slice). DEFAULT false = byte-identical to v6.
+prune_wip_fed_component_demand: false   # 2026-07-27 USER DIRECTIVE: no SKU skipping/hardcoding (inert on makespan)
+      # OFF -> phase1b explodes EVERY plan SKU's BOM from the DB as-is (zero child_quantity is
+      # taken as 0, not skipped). The routing update made 4 of the 5 formerly-pruned GTs buildable;
+      # any GT still lacking proc_time is surfaced by H-1 (infeas), not silently pruned.
+      # plan stays on the JUNE shift sheet; CuringSchedule_pcr is APRIL data.
+
+# ==============================================================================
+# v2 FIX FLAGS
+# ==============================================================================
+# THE RULE THESE FLAGS ENFORCE. The overall LOGIC and ALGO stay the SAME; we correct
+# INSIDE it. Two classes of change, and they are NOT the same thing:
+#
+#   (A) DEFECT -- the code carries a rule it FAILS TO EXECUTE. Fixing it needs no
+#       approval: we are making the code do what it already says it does.
+#   (B) POLICY -- the code executes its rule CORRECTLY and we want a DIFFERENT rule.
+#       This is a decision, not a bug. It gets a FLAG, and the DEFAULT IS v6's
+#       behaviour. Nothing below silently changes the algorithm.
+#
+# !! THIS FILE MUST STAY PURE ASCII. No arrows, no emoji, no curly quotes, no em
+#    dashes. `load_cfg()` does `yaml.safe_load(open(ROOT/"config.yaml"))` with NO
+#    explicit encoding, so on Windows it decodes with cp1252. A non-ASCII byte here
+#    once crashed all 8 phases. (8 em dashes were removed from this file on
+#    2026-07-14 for exactly that reason.)
+
+# ---- (A) DEFECT, RESTORED -----------------------------------------------------
+# enable_short_life_resync: this is v6's OWN DEFAULT and it is now RESTORED.
+#
+# CONFESSION, RECORDED SO IT CANNOT ROT: I had disabled this v6 pass AND HID IT. The
+# key was simply absent from config, so `cfg.get("enable_short_life_resync", False)`
+# silently defaulted it OFF. That was an UNAUTHORISED ALGORITHM CHANGE wearing the
+# costume of a default. A flag that changes the algorithm and cannot be seen in config
+# is indefensible whichever way it is set. It is now EXPLICIT and ON.
+#
+# The pass has real (A) defects of its own -- a one-way ratchet, no precedence
+# re-propagation, and it aims at a POOLED QUANTILE instead of successors[lot]. Those
+# are being fixed INSIDE the pass (phase5), which is the correct place. Fixing a
+# defective pass is not the same as deleting it.
+enable_short_life_resync: true
+
+# ---- (B) POLICY -- AND A DEVIATION FROM v6. SEE THE DEVIATION TABLE AT THE TOP. ----
+# seed_kitpool_from_inventory: phase6 never read inventory.csv at all, so the kit pool
+# started EMPTY even though the plant has real opening WIP on the floor. Turning this
+# on lets phase6 see stock that physically exists. (B), not (A), because v6's rule
+# ("the pool starts empty") is executed correctly -- we want a different rule.
+#   MEASURED: true -> makespan 21.7 h SHORTER than false.
+#   v6's VALUE IS false. This is a DELIBERATE, FLAGGED DEVIATION.
+#
+# !! AND DO NOT DELETE THIS KEY EITHER -- deleting it does NOT get you v6.
+#    VERIFIED 2026-07-14, phase6_curing_revision.py:1291:
+#        if bool(cfg.get("seed_kitpool_from_inventory", True)):
+#    The CODE FALLBACK IS **True**, i.e. the code's own default is the DEVIATION, not
+#    v6's rule. Remove the key and the pool STILL gets seeded, silently. The only way to
+#    get v6's empty pool is to write `false` here EXPLICITLY.
+seed_kitpool_from_inventory:   true    # S5 (2026-07-16): seed opening GREEN-TYRE WIP (age-checked 24h, whitespace-matched; codes match, no SQ/CAP mismatch here). Closes ~3,656 of the opening-WIP kit shortfall (SHORT 3,707->~51). phase1c #24/#25 net the SAME alive stock, so NOT double-counted. Verified by vikram-iyer.
+
+# ==============================================================================
+# !! green_tyre_max_age_h -- **DO NOT DELETE THIS KEY.** (E7) (A) DEFECT.
+# ==============================================================================
+# TWO PHASES FALL BACK TO DIFFERENT VALUES IF THIS KEY IS ABSENT. Deleting it does
+# not "restore a default" -- it makes phase5 and phase6 SILENTLY DISAGREE BY 3x
+# about how long a green tyre lives. VERIFIED IN THE CODE 2026-07-14:
+#
+#   phase5_forward_placement_v2.py:994
+#       float(cfg.get("green_tyre_max_age_h", 72.0))            -> 72 h   (v6's number)
+#   phase6_curing_revision.py:560
+#       float(cfg.get("green_tyre_max_age_h", 0) or 0)          -> 0, then it falls
+#       through to aging_fallback_by_itemtype["Green Tyres"]["max_h"]  -> 24 h
+#
+#   REMOVE THE KEY  ->  phase5 builds to a 72 h shelf life while phase6 expires the
+#   very same tyre at 24 h. The build side and the cure side would be running two
+#   different plants. WITH the key present both read 24 and they agree.
+#
+# THE PLANT'S NUMBER IS 24 h. Confirmed TWICE, independently:
+#   1. inputs/aging_master.csv -- 222 of the 224 mappable GT codes have a row, all 24 h.
+#   2. the plant's own aging table (ctp_inputfiles/aging_table_pcr.png), PCR column:
+#      GREEN_TYRE = 15 min min / 1 day max.
+# v6's 72 h is a v6 number, not a CTP number. A green tyre is a tacky, uncured assembly;
+# this plant does not hold it for three days.
+# *** DO NOT INVENT A THIRD NUMBER. The two candidates are 24 (plant) and 72 (v6). ***
+#
+#   Impact of 24: a TIGHTER window. It builds green tyres CLOSER to their curing slot.
+#
+# REPORTED UPSTREAM: the real fix is to make the two phases share ONE fallback. That
+# needs an edit to phase5/phase6, which this config cannot do. Until then, THIS KEY IS
+# THE ONLY THING HOLDING THEM TOGETHER.
+green_tyre_max_age_h:          72      # KEEP KEY (see DO-NOT-DELETE note above). NOW A FALLBACK ONLY. With green_tyre_age_override_master OFF: phase2 reads aging_master (source), phase6 reads aging_master per-SKU (source; this 24 only fills a GT code with NO master row -- none exist).
+# M-5 CORRECTION (2026-07-27): aging_master GT rows are MaxAging=48h (user-confirmed 2026-07-25), NOT 24.
+# The code reads 48 from the source; this `24` fallback is INERT. Do NOT "correct" aging_master back to 24. phase5 ALSO now reads aging_master (source, per-item 0.25h/24h) -- see phase5 "GREEN-TYRE SHELF LIFE FROM SOURCE" edit. The value 24 matches the plant master; it is no longer the driver.
+green_tyre_age_override_master: true  # USER-DIRECTED (2026-07-16, CLEAN PIPELINE): OFF. phase2 (lot window) + phase6 (over-age verdict) now read the plant aging_master.csv (24h) DIRECTLY, from SOURCE. No config value supersedes the master. Aging is a REPORT, not a rejection.
+
+# ==============================================================================
+# S2 -- CLOSE THE BUILDING->PRESS FEEDBACK LOOP  (drum-pinned two-pass converge)
+# ==============================================================================
+# THE ROOT CAUSE THIS FIXES (proven, 2026-07-16):
+#   phase4 anchors green-tyre building to the ORIGINAL plan.csv press times.
+#   phase6 then slides the presses later (+32 h median, up to +277 h) with NO
+#   feedback to building. So the green tyre is built ON TIME for the FICTIONAL
+#   plan slot, then sits waiting for a press that is actually busy, and rots.
+#   Measured: 95% of green-tyre age is PRESS-WAIT, only 5% is build-spread.
+#
+# THE FIX (this flag): a two-pass drum-pinned convergence, orchestrated by
+# run_pipeline.py when this flag is TRUE.
+#   Pass 1: phase4(anchor=plan.need_by) -> 5 -> 6.  phase6 emits P1 = the revised
+#           press start per block (outputs2/phase6_press_start_P1.csv snapshot).
+#   Re-anchor: phase4 re-runs with each terminal green-tyre lot's LFT pinned to
+#           P1 - min_aging (phase4_cpm.py:~418), so the WHOLE component kit is
+#           re-timed to the slot the press ACTUALLY runs, not the plan slot.
+#   Pass 2: phase4 -> 5 -> 6, with phase6 pinning press start to P1 as a HARD
+#           FLOOR (phase6:~1187): candidate_start = max(P1, kit_ready, prev_end).
+#   Assert convergence P2 == P1 (0 blocks moved off P1). If a block cannot make
+#           P1 (kit not ready) it ratchets: P_{k+1} = max(P_k, phase6(build_to P_k)),
+#           up to converge_max_iters passes, and the driver LOGS how many it took.
+#
+# The presses are NOT moved earlier and the makespan is NOT grown vs pass 1 (that
+# time was already spent). Expected: press-wait -> ~0, physical green-tyre age ->
+# ~min_aging (near 0), over-age at BOTH 24h and 48h -> near 0.
+#
+# DEFAULT FALSE => run_pipeline.py does a single pass = byte-identical to today.
+# The P1 anchor/floor are read by phase4/phase6 ONLY when this flag is TRUE **and**
+# the P1 snapshot file exists (the driver owns its lifecycle: deleted before pass 1,
+# written after). A plain single-pass run therefore stays byte-identical.
+converge_building_to_press:    false   # USER-DIRECTED (2026-07-16, CLEAN PIPELINE): OFF. No multi-pass drum-pin. Single pass = byte-identical to v6. Building anchors to plan press times; phase6 slides presses; aging is MEASURED, never fed back to reject/defer building.
+# converge_max_iters -- MEASURED 2026-07-16, and the "one extra pass converges"
+# PREDICTION DID NOT HOLD (see below). The pin assumed building FINISHES at
+# P1 - min_aging; phase5 does NOT JIT building to its LFT -- it builds green tyres
+# at the EARLY-to-MID of their freshness window and in campaign bursts -- so
+# kit_ready != P1 - min_aging and the fixed point does not close. It ratchets.
+#   max_iters=1 (single extra pass): over-24h 56.0% -> 34.4%, over-48h 30.8% ->
+#              15.1%, makespan 41.1 -> 43.4 d. Stable, no runaway tail. DEFAULT.
+#   max_iters=4 (ratchet):           over-24h -> 29.5%, over-48h -> 15.6%,
+#              makespan -> 47.6 d, and a fat tail (worst tyre ~396 h) because the
+#              ratchet keeps pushing presses later without ever settling.
+# The extra 3 passes buy ~5 pp of over-24h for +4 days of makespan and a worse
+# worst-case. 1 is the better trade and the honest, stable choice; raise it only
+# if you value the last 5 pp over makespan and accept non-convergence.
+converge_max_iters:            1
+
+# ==============================================================================
+# S3 -- PER-SKU GREEN-TYRE WIP CAP  (the rope, a HARD invariant)
+# ==============================================================================
+# Even with S2 closing the loop, nothing STRUCTURALLY stops building from running
+# a SKU far ahead of the press. This is the TOC rope: a green tyre of a SKU may
+# not be built if it would push the count of UN-CURED green tyres of that SKU over
+# `ceil(cover_h x that SKU's press-consumption rate)`. The rate is measured from
+# the REVISED (P1) press schedule -- what the press ACTUALLY consumes -- not the
+# fictional plan. A placement that would breach the cap is pushed later (into its
+# machine's next free slot) and LOGGED loudly. NEVER silently rotted.
+#
+# cover_h basis: the plant buffer_master.csv (jkt_buffer_master_pcr) has NO
+# "Green Tyres" row -- the plant does not publish a GT hours-of-cover. The natural
+# cover for a green tyre is its own shelf life, which the plant aging_master fixes
+# at 24 h. So 24 h is used as the rope window. (buffer_master IS read and honoured
+# for the components it DOES list; vikram confirmed the scheduler ignored it.)
+#
+# DEFAULT FALSE => phase5 places exactly as today. The cap needs P1, so it is a
+# no-op in pass 1 (P1 not yet known) and only binds in pass 2+.
+green_tyre_wip_cap:            false   # USER-DIRECTED (2026-07-16, CLEAN PIPELINE): OFF. This was REJECTING VALID LOTS -- it deferred green tyres up to +553h (out of their aging window) to hold a per-SKU WIP rope. RULE NOW: "if the tyre is built, cure it" -- never defer/drop a valid lot for aging. Aging is a report only.
+green_tyre_wip_cover_h:        24      # rope window (GT plant shelf life; buffer_master has no GT row)
+
+# ---- FIX 2 -- PRESS PULL-FORWARD (drain the green-tyre queue continuously) ----------
+# phase6's press formula is max(orig_start, kit_ready, prev_end): a press IDLES until its
+# plan-clock slot even when the kit is ready AND the press is free. The critical-path
+# study proved the extra ~5 makespan days are green tyres WAITING (last-100 lots: built
+# day 29.6, cured day 34.6 = 125 h wait) while presses sit ~40% idle. This DROPS the
+# orig_start floor: a press starts its NEXT planned block as soon as it is free and the
+# kit is ready (floored only at the schedule horizon open). It NEVER re-sequences a press,
+# re-assigns a block, double-books, or cures before the kit exists -- it only removes idle
+# waiting, so it cannot rot a tyre (curing earlier = fresher, not staler). Unlike
+# green_tyre_jit_build / building_level it does NOT touch building, so no downstream rot.
+# DEFAULT FALSE => byte-identical (candidate_start = orig_start).
+press_pull_forward:            false
+
+# ---------------------------------------------------------------- S6 streaming
+# press_streaming_kit_gate: a press may start curing as green tyres FLOW to it,
+# instead of waiting for EVERY tyre of an 8-h block to be built.
+# PLANT EVIDENCE (June 2026 MES): 95.8% of build campaigns had curing START BEFORE
+# building FINISHED; the transfer unit is ONE green tyre feeding a median of 6
+# presses at once; campaign-start -> first-cure is a median of 0.98 h.
+# The offset is the routing's GT BUILDING transfer_time_min (plant workbook: 90 min),
+# read from routing.csv unless gt_transfer_time_min overrides it here.
+press_streaming_kit_gate:      true
+# gt_transfer_time_min:        90    # uncomment to override routing.csv
+gt_transfer_time_min:          120   # v78 (user 2026-10-11, Algo Planning BRBC-21): green tyre min aging 2 h before curing (routing transfer 90 min)
+curing_keep_changeover:        true  # v78 (user 2026-10-11, BRBC-27): mould change (plan CO minutes incl. cleaning) moves with the SKU sequence when cure blocks slide
+
+
+# ==============================================================================
+# LEVER 1 -- S2b: JIT TERMINAL GREEN-TYRE BUILDING  (EXPERIMENT, prove-or-revert)
+# ==============================================================================
+# The residual green-tyre over-24h (19.1% with S1/S2/S3/S5) is because phase5
+# places terminal GT building at the EARLY freshness floor (fresh_floor = LFT -
+# (max_age - min_age) = LFT - 24 h), so building finishes ~half a shelf-life early
+# and the tyre WAITS in the per-SKU pool. This flag re-targets the terminal GT
+# build to its LFT (finish = due = P1 - min_aging, as-late-as-possible in the
+# cure-by band) so it lands fresh at the press. GREEN TYRES ONLY -- carcass and
+# feeders untouched. Machine capacity still respected (forward packer, no double-
+# book). This RE-OPENS the building-JIT failure mode that killed building_level /
+# feeder_jit, so it is proven, not assumed: KEEP only if green over-24h drops AND
+# component over-age does not rise AND phantom/negative-gap/double-book/makespan
+# do not regress. DEFAULT FALSE => byte-identical to today's fresh_floor build.
+#
+# RESULT (MEASURED 2026-07-16, flag ON, full pipeline + FEFO audit):
+#   green over-24h 19.06% -> 9.65%  (GOOD, -9.4 pp)   median 11.9h -> 7.4h
+#   green over-48h  5.30% -> 5.74%  (worse)
+#   COMPONENT FEFO 43.86% -> 54.69% (WORSE, +10.8 pp) <-- the warned failure mode
+#   phantom 33,723 -> 33,723 (unchanged)   makespan 45.94 -> 46.59 d
+#   negative-gap 0, double-book 0 (clean)
+# VERDICT: REVERTED. Delaying the GT build to its LFT makes it CONSUME its
+# components ~half a shelf-life later, so the components (built on their own
+# schedule) sit and rot: it moved ~31k tyres out of GT over-age at the cost of
+# ~280k component-units INTO over-age. Net strongly negative; component over-age
+# rising is an explicit revert condition. Same class of failure as building_level
+# / feeder_jit. Flag OFF => byte-identical to the shipped 19.06% / 43.86% output.
+green_tyre_jit_build:          false
+
+# ==============================================================================
+# LEVER 2 -- S6: phase3 DAG FEFO QUANTITY-ALLOCATION  (EXPERIMENT, prove-or-revert)
+# ==============================================================================
+# Component FEFO over-age (43.86%) is driven by phase3 OVER-LINKING: build_dag_edges
+# fan-links each feeder (child) lot to EVERY block+aging-compatible green-tyre lot in
+# its 3-day wave, so phase4's backward CPM collapses each feeder's LFT to the
+# wave-START -> feeders built in early bursts -> they WAIT -> rot. phase4_cpm.py's own
+# comment (~:544) names the clean fix as a phase-3 quantity-allocation redesign, NOT
+# an LFT override (which it gates OFF because it starves early days).
+# ON => build_dag_edges_qty_alloc: each feeder lot's QUANTITY is FEFO-allocated to the
+# GT lots it actually serves (oldest supply -> earliest demand), emitting an edge only
+# where a feeder contributes quantity. Its LFT then tracks the LATEST GT it feeds, so
+# feeder production spreads to level demand instead of bunching at wave-start. The block-
+# overlap, aging-window and routing-sku HARD constraints are preserved byte-for-byte.
+# KEEP only if component over-age drops AND green over-age does not rise AND phantom /
+# negative-gap / double-book do not regress. DEFAULT FALSE => v6 fan-link, byte-identical.
+#
+# RESULT (MEASURED 2026-07-16, flag ON, full pipeline + FEFO audit of record):
+#   COMPONENT FEFO 43.86% -> 47.05% (WORSE, +3.2 pp; over-age UNITS 1.14M -> 1.49M)
+#   green over-24h 19.06% -> 18.07% (marginally better)   green over-48h 5.30 -> 5.37
+#   phantom 33,723 -> 33,723 (unchanged)   makespan 45.94 -> 43.06 d (better)
+#   negative-gap 0, double-book 0 (clean);   DAG edges 21,858 -> 14,609
+# APPLES-TO-APPLES (122 items verified in BOTH): 43.86% -> 43.04% (only -0.8 pp) BUT
+#   with severe per-item VOLATILITY (e.g. Steel Belt B1-PBLT093 1.8% -> 56.1%, +54 pp).
+#   The headline rose because allocation pulls more high-over-age items into the
+#   VERIFIED set (123 -> 142; e.g. CALANDARED ROLL at 80%). 5,589 consumer-item demands
+#   were left under-covered: the block-overlap HARD constraint fragments FEFO supply so
+#   later consumers draw older stock -> rot REDISTRIBUTES, it does not reduce.
+# VERDICT: REVERTED. It does not drop component over-age below 43.9% (audit of record
+#   ROSE to 47.1%), and the flat common-item aggregate hides big per-item regressions.
+#   WHY the mechanism failed & WHAT IT WOULD TAKE: spreading feeder LFTs in phase3 only
+#   moves DEADLINES; phase5 still forward-packs feeders EARLY (campaign FFD + fresh_floor),
+#   so feeders still wait. The real driver of component over-age is phase5 PLACEMENT TIME,
+#   not phase3 linkage. Fixing it needs a COORDINATED backward/pull placement of the whole
+#   feeder->GT->press chain in phase5 (true DBR rope) -- a phase5 re-architecture, not a
+#   DAG flag -- and that is the same class as the tested-dead building_level / feeder_jit,
+#   which is why Lever 1 (JIT one stage) just shifted rot onto its feeders. Flag OFF =>
+#   byte-identical to the shipped 19.06% / 43.86% output.
+dag_quantity_allocation:       false
+
+# ---- !! DEVIATION FROM v6. SEE THE DEVIATION TABLE AT THE TOP OF THIS FILE. ----
+# building_month_cap_h: v6's own value is 31 * 24 * 0.90 = 669.6 h. v6 computes it INLINE,
+# so changing it used to mean EDITING CODE. It is now a config key -- phase5:770 reads it
+# as BUILDING_MONTH_CAP_H and it caps every building machine's monthly hours.
+#
+# !! THE SHIPPED VALUE IS 480, AND **NOTHING MEASURED OR DOCUMENTED SUPPORTS 480.**
+#    The phase5 write-up documents 507 and 669.6. 480 is NEITHER. Its provenance is
+#    UNKNOWN. (The code fallback IS correct -- `cfg.get("building_month_cap_h", 31*24*0.90)`
+#    -- so it is THIS LINE, not the code, that departs from v6.)
+#
+#    MEASURED:  480   -> building peak 637.2 h
+#               669.6 -> building peak 690.4 h    (v6)
+#
+#    LEFT AS SHIPPED ON PURPOSE. Changing a live capacity cap is a JUDGEMENT CALL and it
+#    belongs to the user, not to whoever is editing this file. It is flagged, not fixed.
+building_month_cap_h:          648.0   # CTP: 30 din x 24 h x 0.90 (June = 30 din, v6 ka 31 galat tha)
+
+# ---- (B) POLICY -- BUILDING LOAD BALANCING. FLAGGED, DEFAULT OFF ---------------
+# balance_building_load: BUILDING is the ONLY unbalanced department. At cap 480 its
+# machines run 637.2 h (3403, 88.5%) down to 283.3 h (3409, 39.4%) -- a 49-point spread,
+# where every other department is inside 22. 3409 is legally eligible for 1,419.5 h of
+# work and is handed 283.4 h. NOTHING BLOCKS IT: not inch, not portfolio, not eligibility.
+# (BUILDING_SKU_MACHINE_MAX, _pcap and LOAD_CAP are all DEAD CODE -- never read.)
+#
+# THE CAUSE IS THE PACKING ORDER, NOT THE CAP. v6 packs item-groups LARGEST-FIRST (LPT),
+# and a group dumps every one of its lots onto ONE machine until the cap. So the big
+# FLEXIBLE groups take the popular machines first, and a 318.7 h group eligible on ONLY
+# {3403, 3408} arrives to find both already full -- and blows through the cap on both.
+# Meanwhile 3409, which nothing was ever forced to use, idles.
+#
+# ON = most-constrained-first order + fair-share cap + load-first spill. MEASURED:
+#                        v6 (OFF)          balanced, slack 1.06
+#     building peak      637.2 h (88.5%)   543.3 h (75.5%)     LP lower bound 506.7 h
+#     spread             49.1 pts           13.9 pts
+#     machine 3409       39.4%              67.4%
+#     changeovers        530 (447.1 h)     470 (412.5 h)       <- FEWER, not more
+#     makespan           36.21 d            35.45 d
+#     cured in 35 d      99.64%             99.91%
+#     press starvation   198.2 h / 9 presses  46.5 h / 5 presses  (over a 120 h budget)
+#     GREEN-TYRE EXPIRY  28.89%             31.10%              <- WORSE. THE REAL COST.
+#     DAG violations     0                  0
+#
+# !! TWO HONEST WARNINGS.
+#  1. THE MAKESPAN GAIN IS NOT CAUSED BY THE BALANCE. The response is NON-MONOTONE:
+#     slack 1.00 gives the BEST balance (spread 5.8 pts) and the WORST makespan (36.54 d,
+#     worse than v6). Only the 1.04-1.08 plateau lands at 35.35-35.45 d. Downstream is
+#     chaotic w.r.t. this knob -- take 35.45 d as an empirical result at this config, not
+#     as a mechanism, and RE-MEASURE after any data change.
+#  2. IT DOES NOT BUY THE 35-DAY TARGET. Makespan 35.45 d, 99.91% cured in 35 days,
+#     100% at 36.0 d. It closes ~3/4 of the press-starvation gap and NOT the last of it.
+#
+# THE BALANCE ITSELF IS ROBUST AND CAUSAL (predicted offline, reproduced in the pipeline
+# to 0.1 h). Turn it on for a balanced, executable building line.
+#   BEST CONFIG:  balance_building_load: true   building_balance_slack: 1.06
+# DEFAULT FALSE = v6's behaviour (LPT order, month cap).
+balance_building_load:         true    # USER-DIRECTED (2026-07-16): ON. Balance TBM/building load across all eligible machines (most-constrained-first + fair-share cap + load-first spill). Bounded by routing eligibility.
+# Fair-share slack in balanced mode: cap = (total building work / machines) x slack.
+# 1.00 = perfect share (best peak, worst makespan). 1.04-1.08 is the stable plateau.
+# Ignored entirely when the flag is off.
+building_balance_slack:        1.06
+
+# ---- CTP DEVIATION #31 -- PER-CODE TAKT SPREAD (min TBMs by DAILY curing pull) ------
+# balance_building_load spreads work ACROSS codes but pins a single high-volume code to
+# ONE machine unless its MONTH-TOTAL exceeds the fair-share cap. MEASURED: 27 of 30
+# multi-eligible GT codes run on 1 TBM (mean 1.13) and our curing tail is 8 d (90->100%)
+# vs the plant's 3 d; the plant runs those codes on 2-3 TBMs. This gives each long-pole
+# code a MINIMUM machine count from its DAILY pull = ceil(daily_h / (per_machine_daily_h
+# * target_util)) and round-robins its lots across that many least-loaded eligible
+# machines. Only codes above building_takt_min_hours move. Bounded by routing eligibility.
+# DEFAULT FALSE = byte-identical to today. Measure changeovers: spreading a code adds
+# them, and that cost is the makespan ceiling (building_level blew 36->64 d on this).
+building_takt_spread:          true    # SHIPPED 2026-07-20: MEASURED 38.79->37.02 d, over-24h 55.0->53.6%, invariants hold. Spreads 27->18 single-pinned codes (mean machines/code 1.13->1.60). +133 building changeovers is the cost; 37.02 is the lever's floor (residual = cold-start/plan-ramp, data-side).
+building_takt_target_util:     0.65    # single-code per-machine daily headroom (0.65 best measured)
+building_takt_min_hours:       120.0   # only split codes with >= this many build-hours (120 beats 250: same makespan, better aging)
+
+# ---- (B) POLICY -- EQUAL LOAD-BALANCING FOR EVERY NON-BUILDING GROUP. CTP #28 -------
+# balance_all_machines: extends equal load-balancing to EVERY machine group served by
+# the per-lot dispatcher (mixers, cutters, calenders, tread/extruder, slitters, bead) --
+# NOT just building. When multiple machines are ROUTING-ELIGIBLE for a lot and its
+# material (kit) is ready, the lot goes to the LEAST-LOADED eligible machine among those
+# that can finish within balance_all_tolerance_h of the earliest achievable finish, so no
+# eligible machine idles while a sibling saturates. Bounded by routing eligibility
+# (inputs/routing.csv) -- it never fabricates eligibility -- and by the tolerance, so it
+# never delays a lot more than the band or shreds a mother-roll/campaign run.
+# DEFAULT FALSE = shipped earliest-finish picker. USER-DIRECTED (2026-07-16): ON.
+balance_all_machines:          true
+# Tolerance band (hours) for the above. A machine balances a lot only if it can finish
+# within this of the lot's earliest achievable finish. 1.0 h is a safe default; larger
+# spreads more aggressively (at some changeover cost), 0 disables (earliest-finish only).
+balance_all_tolerance_h:       1.0
+
+# reinsert_changeover_blocks: phase6 DELETES the CHANGEOVER rows that plan.csv reserves
+# -- 105 blocks / 356 h of real mould-change time -- and then reports the presses as if
+# that time were free. Turning this on puts them back.
+#   DEFAULT FALSE = v6's behaviour. Turning it ON makes the press schedule TIGHTER and
+#   more honest, and it will surface lateness that is currently hidden.
+reinsert_changeover_blocks:    false
+
+# ==== PHASE6 CURING-TAIL FIXES (2026-07-27) -- see PHASE6_CURING_TAIL_BUG.md ==========
+# FIX A -- clamp_wip_seed_to_plan_start: opening WIP is physically on the floor at t0, so a
+#   produced_time AFTER plan_start (a wrong-month inventory snapshot) is a data error. When ON,
+#   such a seed is FLAGGED loudly and its kit-ready is clamped to plan_start instead of being
+#   treated as "available in the future" (which strands curing). No-op when every produced_time
+#   <= plan_start (the shipped JUNE run) -> byte-identical there.
+clamp_wip_seed_to_plan_start:  true
+# FIX B -- press_gap_fill: replace phase6's scalar per-press `prev_end` cursor with a per-press
+#   FREE-SLOT search. A kit-late block takes the earliest hole on its press instead of the queue
+#   tail, so it never head-of-line-blocks later kit-READY blocks. Kills the 4x amplification that
+#   turned a 1% shortfall into a 40-day April tail. OFF = scalar cursor (byte-identical). All hard
+#   invariants still enforced (duration, no-before-orig, no-before-kit, no double-book, immutable
+#   fields); only within-press ORDER/transitions relax (reported INFO). Makespan can only stay
+#   equal or improve. Verified by arvind-rao.
+press_gap_fill:                true
+building_gap_fill:             true    # v2 2026-07-30: building twin of press_gap_fill (fill TBM idle vs prev_end cascade)
+building_day_pool_sequence: true   # 2026-09-29: plant Shift Schedule is a DAY plan (Notes sheet) -> build each machine-day in order of curing need, from 07:00
+building_kit_aware_dispatch: true   # 2026-09-30: next build row = earliest feasible start (kit + TBM free); fixes TBM idle behind a kit-late row
+lft_cap_by_need: true   # 2026-09-30: component LFT <= its own need (building-plan time) - min aging; CPM LFT came from phase2 GT lots and ran 6-10 h late
+lft_cap_skip_machines: []   # 2026-09-30 tested: skipping mixers+1802 loses the PCR gain (95.3/90.8 -> 94.9/90.4) -- mixers are the shared constraint
+building_shift_pool: true     # 2026-09-30 BR-1: a build row may not start before its plan SHIFT (order inside the day is ours)
+enforce_pm_downtime: true     # 2026-09-30 BR-10: downtime_reason PM/MTC windows blocked (presses, TBMs, upstream)
+final_repair_pass: true       # 2026-09-30 BR-7/10/12/66: final pass enforces changeover matrix, PM, min+max aging kit (later-only)
+final_repair_hard_max_aging: false   # TESTED 2026-09-30: true (expired = scrap, no remake) -> 65.6/63.1 built/cured, 176 builds short
+compress_exclude_machines: ["F270", "K310", "F440", "K270M", "K430-1", "K430-2", "901"]   # v63: mixers (planner lots fixed) and 901 (4RC rules) never moved by the left-shift
+compress_alt_machine_departments: ["TBR APEXED BEAD ASSEMBLY", "BEAD WINDING", "BEAD WINDING PCR", "BEAD APEXING"]   # v69 #4
+batch_release:                     # v69 #2 (user 2026-10-10): compound lots usable batch by batch (+ min aging), consumers in need order
+  enabled: true
+  item_types: ["MASTER COMPOUND", "FINAL COMPOUND"]
+curing_aware_building:             # v69 #5 (user 2026-10-10): rows whose tyres would wait > gt_life_h - margin_h for presses go behind
+  enabled: true
+  gt_life_h: 72
+  margin_h: 8
+  penalty_h: 24
+upstream_gap_fill:                  # v81 (user 2026-10-12): close the idle on component machines (GAP_12_15_OCT_v80.md)
+  floor_to_ready: true              # A1: final repair floor = upstream open on component machines (not mixers / 901) -> lots move back
+                                    #     into idle when inputs + min aging, machine predecessor + matrix changeover, PM and shelf life allow
+  repeg_compounds: true             # A2: compound batches re-allocated FEFO to component lots (earliest-ready to earliest-start)
+  repeg_mode: compounds             # v83 TESTED (user 2026-10-12) "item_stock": every upstream item re-allocated FEFO, need net of opening
+                                    #      stock -> cured 127,708 (v82 127,866), TBR +315, PCR -473, 1801/1803 family rules worse. NOT kept.
+                                    #      "compounds" = v81/v82 behaviour (current)
+  family_reorder: true              # v82: a later lot of the SAME compound family (same item on BR-56 cutters) as the lot before or after
+                                    #      an idle gap moves into it (inputs, changeover, PM, shelf life kept; family switches never rise)
+  min_gap_min: 30
+compress_upstream: true    # v63 (user 2026-10-10): ON -- upstream lots (not mixers / 901) move EARLIER into idle (inputs + min aging, shelf floor, changeover allowance kept). Was:   # 2026-09-30 TESTED: neutral (21 moves, same 97.1/92.6) -- no idle mixer time to move into
+compress_changeover_pad_min: 30
+compress_aging_margin_h: 2.0
+compress_sweeps: 2
+capacity_aware_lft: false   # 2026-09-30 TESTED: worse (95.7/91.2) -- reprioritising saturated mixers only moves the shortage
+
+# ---- BEST-PRESS -- mould-capped earliest-finish curing re-placement (phase6) --------
+# best_press_curing: phase6's default is the verbatim v6 port -- each block stays on
+# the press plan.csv named and only slides LATER. That pins the makespan to plan.csv's
+# press choice: a SKU the LP put on ONE press cures serially even though routing allows
+# many. When ON, phase6 re-places every curing block onto the routing-eligible press
+# with the EARLIEST finish, under three HARD real constraints:
+#   * kit-gate   -- never start before the block's own kit_ready (green tyre must exist);
+#                   the FIFO green-tyre->block match from revise_curing_schedule() is REUSED,
+#                   only the press + start move.
+#   * mould-cap  -- a SKU never runs on more presses AT ONCE than it has moulds. The cap
+#                   DEFAULTS to the plan's own max concurrency per SKU -- a PROVEN lower
+#                   bound (the plan already runs that many at once). It NEVER invents a
+#                   mould. Supply real plant counts in curing_mould_counts to raise it.
+#   * changeover -- a mould change costs curing_changeover_min (below) when a press switches SKU.
+# MEASURED (outputs2): verbatim 37.0d -> best-press 34.85d, PHYSICALLY VALID (concurrency
+# never exceeds the plan's own). It does NOT beat the BUILDING floor (last green tyre's
+# kit_ready ~33.4d) -- going lower is a building-rope lever, not a curing one. plan.csv and
+# routing.csv are READ ONLY. The E4 gate for this path checks routing-eligibility + mould-cap
+# in place of the (now intentional) pressNo/sequence changes.
+#   DEFAULT FALSE = v6's verbatim behaviour. Turn ON for the ~2.15d curing recovery.
+best_press_curing:             false
+# Mould-change (changeover) cost in minutes for the best-press path. 300 = 5 h = the plan's
+# own CHANGEOVER-row value. Only used when best_press_curing is ON.
+curing_changeover_min:         300
+# CHANGEOVER-TOLERANCE (hours). Best-press's makespan gain and its mould-change COUNT are
+# tightly coupled: pure earliest-finish (tol 0) reaches 34.95d but at ~270 mould changes vs
+# the plan's 56. Raising this makes a block WAIT up to `tol` on a press it can keep (no
+# changeover) rather than switch -- FEWER changeovers, but makespan degrades FAST. Measured
+# frontier: 0h->34.95d/270 | 2h->36.83d/177 | 5h->45.97d/72. There is NO point with ~56
+# changeovers AND makespan < 37d -- the verbatim plan (37.0d/56) is already changeover-optimal.
+# Default 0 = max makespan gain. See BEST_PRESS_CURING.md sec.10.
+curing_changeover_tolerance_h: 0
+# OPTIONAL plant-supplied physical mould counts, per SKU code, e.g.
+#   curing_mould_counts: { "1D25218Z14008RXC10": 3, "1325219515091HURL2": 5 }
+# Each entry SUPERSEDES the plan-derived cap for that SKU. Leave empty to use the proven
+# plan-concurrency lower bound (never invents a mould). ASK THE PLANT before raising any.
+curing_mould_counts:           {}
+
+# ---- DECLINED. THIS IS A TRAP. DO NOT TURN IT ON. -----------------------------
+# resequence_press_queue_by_kit: DECLINED AND MUST STAY OFF.
+#
+# It looks like a free win ("save 3 days") and it is not. MEASURED:
+#   - It takes press SKU-transitions from 56 -> 339.
+#   - plan.csv reserves EXACTLY 56 CHANGEOVER blocks. The other 283 mould changes have
+#     ZERO press time reserved for them: 566 - 1,132 press-hours of mould changes that
+#     the schedule never pays for, against just 19.8 h of total fleet mid-horizon idle.
+#     There is nowhere to put them.
+#   - And phase6 DELETES the changeover rows (see reinsert_changeover_blocks above), so
+#     it charges ZERO for a mould change. It would be OPTIMISING AGAINST A COST FUNCTION
+#     THAT IS BLIND TO THE COST it is incurring.
+#
+# Its "3 days saved" are an ARTEFACT OF THAT BLINDNESS, not a real saving. Do not enable
+# this until changeovers are (a) reinserted and (b) actually charged to the press.
+resequence_press_queue_by_kit: false
+
+# ---- (B) POLICY -- FLAGGED, LEFT OFF ------------------------------------------
+# schedule_master_mixing: v6 carries a NAMED, DELIBERATE assumption in phase2 --
+# "MASTER COMPOUND is treated as always available -- never produced." It executes that
+# rule correctly, so changing it is (B) POLICY, not a bug fix. DEFAULT FALSE = v6.
+#
+# WHAT THE v6 ASSUMPTION COSTS (phase2 now reports this LOUDLY on every run):
+#   master-compound lots created            : ZERO
+#   master-compound demand left unscheduled : ~3.5 MILLION kg
+#   Banburys 270M / 430-1 / 430-2 / 440M    : ABSENT from the utilisation report
+#                                             ENTIRELY -- as if they did not exist
+#   and the routing HAS 6,972 fully-populated MASTER MIXING rows. The data is there.
+#
+# !! WARNING BEFORE YOU TURN THIS ON. It makes the schedule **LONGER, NOT SHORTER.**
+#    It does not unlock capacity -- it ADDS A WHOLE UPSTREAM STAGE that is simply absent
+#    today. 3.5M kg must now be mixed, sequenced and aged BEFORE final mixing can begin,
+#    and every downstream lot gains a new predecessor. Expect the horizon to move OUT.
+#    That is the honest cost of modelling reality, and it is why this is a decision.
+schedule_master_mixing:        true    # USER-DIRECTED (2026-07-16): ON. Schedule the masterbatch mixing stage (3.5M kg, 89 items) on the Banbury mixers -- master compound now in BOTH demand and schedule. Adds a whole upstream stage before final mixing; makespan expected to LENGTHEN (honest cost of modelling reality).
+
+# ---- PLANT-CONFIRMED 2026-07-14 -----------------------------------------------
+# mixer_changeover_min: 2 minutes. See the long note at machine_to_changeover_line.
+# THIS IS ALREADY WHAT v6 DOES. No code change. The key exists so nobody "fixes" it.
+mixer_changeover_min:          1       # 2026-09-30 BR-74: plant override of the stated 2 min (now actually read by phase5)
+
+# ------------------------------------------------- v6 INPUTS (written by adapt_inputs.py)
+# These are the files v6's phases actually open, with v6's own names. They are GENERATED
+# from the CTP masters listed under `ctp_files` below -- run `python adapt_inputs.py` first.
+files:
+  bom:               "bom.csv"
+  routing:           "routing.csv"
+  plan:              "plan.csv"
+  building_plan:     "building_plan.csv"   # 2026-07-29: plant BUILDING schedule (btoc), phase5 echo
+  itemtype_master:   "itemtype_master.csv"
+  aging_master:      "aging_master.csv"
+  mpq:               "mpq.csv"
+  buffer_master:     "buffer_master.csv"
+  inventory:         "inventory.csv"
+  # mg_preference    -- NOT PROVIDED. MG excluded by user instruction (phase1a is not run).
+  # belt_wire_mapping-- NOT PROVIDED. CTP has no belt-wire campaign data, so v6's
+  #                    `size_wire_campaigns_per_wave` never fires and every belt lot is
+  #                    sized by the ordinary wave-aware sizer. This is v6's own graceful
+  #                    fallback (`belt_to_wire = {}`), not a change.
+
+# ------------------------------------------------------------- CTP SOURCE MASTERS
+# Bundled inside this folder, so the project is SELF-CONTAINED and runs on any machine.
+# Path is resolved relative to this config file, never to the current working directory.
+ctp_inputs_dir: "ctp_inputfiles"
+ctp_files:
+  bom:                "bom_live.csv"       # 2026-09-29: LIVE JK_CTP_PPDS.CTP_Master_BOM (was bom_comb.csv of 2-Sep)
+  routing:            "routing_live.csv"   # 2026-09-29: LIVE JK_CTP_PPDS.CTP_Master_Routing (was routing_comb.csv of 2-Sep)
+  # 2026-07-29: BOTH plans now come from the plant's btoc JULY files (adapt_inputs auto-detects the
+  # btoc column layout Press/SKU/Cured_Qty and Machine/SKU/Qty). Was "ctppcr_plan_shiftsheet.xlsx".
+  plan:               "curing_sep_comb.xlsx"   # 2026-09-26: discard/ Sep PCR5+TBR4 curing (was curing_comb.xlsx)     # COMBINED PCR+TBR curing
+  building_plan:      "building_sep_comb.xlsx"   # 2026-09-26: discard/ Sep PCR5+TBR4 building (was building_comb.xlsx)   # COMBINED PCR+TBR building
+  itemtype:           "jkt_itemType_master_pcr.csv"
+  aging:              "aging_sep_live.csv"   # 2026-09-26: JK_CTP_PPDS.CTP_Master_Aging (was aging_comb.csv)       # COMBINED PCR+TBR aging
+  mpq:                "jkt_mpq_corrected.xlsx"   # USER 2026-07-23: switched to the plant's jkt_mpq (corrected: exact itemtype names, PCR sheet, dup rows collapsed). Prior: "MOQ 5_treadM.xlsx"
+  #   (cut bead-apex over-production 68%->11%; makespan 42.67->40.12 d). The master carries
+  #   FREE-TEXT run-qty formats -- phase2 _parse_mpq() handles them all so they never silently
+  #   drop to a None floor again (see phases/phase2_lot_sizing.py _parse_mpq docstring):
+  #     Tread "310, 206"  -> 206  (SIZE-DEPENDENT: plant note "Change in M with the highest tread
+  #                                length: 12-14 in = 129 m / 15-20 in = 86 m; 310 vs 206 Nos".
+  #                                We use the SMALLER (206) as the universal floor so no tread
+  #                                size is forced to over-produce. Ask plant if a per-inch MPQ
+  #                                is wanted -- would need each tread SKU's inch.)
+  #     Cap Strip "9*1800" -> 16200   |  "Spool length (300)" -> 300   |  "3 Batches" -> None
+  #                                (compound, sized by Banbury batch_size, not a piece floor)
+  buffer:             "jkt_buffer_master_pcr.csv"
+  inventory:          "opening_wip_live.csv"   # 2026-09-26: LIVE jkplanning_CTP.opening_wip (was opening_wip.csv)
+  changeover_matrix:  "changeover_live.csv"   # 2026-09-30: LIVE JK_CTP_PPDS.CTP_Master_ChangeoverMatrix (was 3-Jul xlsx)
+
+# ================================================================================
+# v6 TUNING -- every value below is copied from v6_wave_p2/config.yaml. Do not "fix".
+# ================================================================================
+
+# pre_curing_buffer_h: safety fallback between Green-Tyre finish and curing start,
+#   used only when the green tyre has no min_aging in the aging master.
+# global_max_lookback_h: safety ceiling for AEST (non-bottleneck items).
+# schedule_open_h: hours BEFORE the first curing slot that the plant's floor opens.
+# enforce_strict_horizon: a lot finishing past planEndDate is flagged PAST_HORIZON
+#   (still placed).
+pre_curing_buffer_h:     8
+global_max_lookback_h:   120
+il_daily_campaign:                  # BR-V10 (2026-10-01, plant rule 3.1.3 + BRM-07): IL3/IL5 in ONE continuous campaign per plant day on F270
+  enabled: true                     # whichever is needed first runs first; only the items demanded that day; no fixed time of day;
+  items: ["IL3", "IL5"]             # a real B99 lot is moved directly in front when possible (final-mixer rule: B1/B2/B99 before IL);
+  prep: "B99"                       # if no free window on F270 the campaign is ENFORCED: other F270 lots are pushed later. false = v5 behaviour.
+  prep_make_lot: true               # v16 (2026-10-04): no existing B99 lot fits in front on time -> a dedicated B99 prep lot is made right before the campaign. false = v15.
+  prep_lot_batches: 5               # v16: size of that prep lot (BRM-01 minimum lot = 5 batches)
+  regroup_merged: true              # v18 (2026-10-05): merged same-day campaigns re-laid as B99 -> B99 -> all IL3 -> all IL5 (no compound twice in a shift). false = v17
+  once_per_plant_day: true          # v20 (2026-10-05, plant rule 3.1.3): after the final repair, ONE IL campaign per plant day 07:00->07:00 (merge / move + push consumers). false = v19
+  debug: false
+butyl_prep_campaign:                # v29 (2026-10-06, user): final-mixer rule B1/B2/B99 before 30G -- B99 is PLACED in front of
+  enabled: true                     # each plant day's 30G run (real B99 lot, else a prep lot of il_daily_campaign.prep_lot_batches),
+  items: ["30G"]                    # like the IL3/IL5 campaign; the 120 s clean-out only when it cannot be placed. false = v28.
+# ═══ V32 GENERAL RULES BR-1..BR-10 (2026-10-06, user) ═══════════════════════════════════════════════════
+# BR-1 / BR-3: building rows in plan shift (early start <= 1 shift, building_plan_feasible.pull_forward_h 8); a row whose
+#   feed-hours (time until its presses run out of the GT, after GT stock) <= starvation_h goes first when it can start
+#   within starvation_jump_min of the earliest ready row (protect starvation-risk SKUs before machine convenience).
+building_priority:
+  enabled: false   # v36 (user): v26 rule set + v27-v31 rules -> OFF
+  starvation_h: 8
+  starvation_jump_min: 60
+# BR-8: family batching (same plant-day pass as the extruders) on every other matrix-mapped upstream machine;
+#   family = the item's BOM input set (calendered roll / fabric / compound / bead wire); same item, then family,
+#   then least matrix changeover, within coverage (inputs ready, shelf life, before the first consumer, <= 12 h).
+calender_rules:                      # v71 (user 2026-10-10): BR-41 -- same / compatible compounds together per plant day
+  enabled: true                      # (window checks: inputs ready, shelf life, before the first consumer, day not longer)
+  max_delay_h: 12
+  max_pull_h: 12
+  machines:
+    "1101": {line: "Roller Head Calendar PCR", mode: bom_set}
+    "1901": {line: "Roller Head Calendar TBR", mode: code_prefix}
+    "2201": {line: "", mode: bom_set}
+kit_sync:                            # v71 (user 2026-10-10): BR-66 / BR-67 -- every upstream machine (not mixers, not 901) runs
+  enabled: false                     # v72: OFF (v71: no gain in kit timing, broke bead / extruder grouping, -2 k cured)                      # urgent-first by its consumers' deadline (next build - min aging); a day takes the order with
+  max_delay_h: 12                    # fewer lots late for their consumer; all window checks kept; the other passes get the same
+  max_pull_h: 12                     # urgent-first + accept-fewer-misses
+  machines: ["1001", "1002", "1101", "1102", "1103", "1104", "1201", "201", "202", "601", "701", "702", "801", "802",
+             "1801", "1802", "1803", "1901", "2001", "2101", "2201", "2401", "2402", "2403", "2404", "2405"]
+cutter_rules:                        # v70 (user 2026-10-10): BR-50 / BR-52 -- a building SKU's belt kit cut together per plant day
+  enabled: true                      # (PCR Belt-1 + Belt-2 on 801; TBR B1..B4 + L / R STC on 802), then cheapest changeover;
+  max_delay_h: 12                    # window checks: inputs ready, shelf life, before the first consumer, day not longer
+  max_pull_h: 12
+  machines:
+    "801": {line: "Belt Cutter PCR", mode: belt_kit}
+    "802": {line: "Belt Cutter TBR", mode: belt_kit}
+cutter_shift_merge:                  # v70 (user 2026-10-10): BR-56 -- same item one block per shift on cutters / slitters,
+  enabled: true                      # strict (no consumer later); BR-49 / 51 / 53 / 55 / 57 = routing machine mapping (already)
+  rounds: 3
+  machines: ["801", "802", "2101", "2001", "1103", "1104", "2401", "2402", "601", "701", "702"]
+pcr_bead_rules:                      # v70 (user 2026-10-10): BR-58..61 PCR bead -- winding 1201, apexing 201 / 202 grouped per
+  enabled: true                      # plant day by spool / former inch (matrix), then cheapest changeover; BR-58 / 59 / 60
+  max_delay_h: 12                    # (approved machine, routing rate, matrix changeover) already applied by routing + matrix
+  max_pull_h: 12
+  winding_matrix_line: "PCR Bead Winding"
+  machines:
+    "1201": {line: "PCR Bead Winding", mode: matrix_inch}
+    "201": {line: "PCR Bead Apexing", mode: bead_inch}
+    "202": {line: "PCR Bead Apexing", mode: bead_inch}
+family_batching:
+  enabled: false   # v36 (user): v26 rule set + v27-v31 rules -> OFF
+  max_delay_h: 12
+  max_pull_h: 12
+  machines:
+    "1101": "Roller Head Calendar PCR"
+    "1103": "Ply Cutter PCR"
+    "1104": "Fisher Cutter PCR"
+    "801": "Belt Cutter PCR"
+    "601": "Cap Ply Cutter"
+    "2401": "Chaffer Slitter"
+    "2402": "Chaffer Slitter"
+    "1201": "PCR Bead Winding"
+    "201": "PCR Bead Apexing"
+    "202": "PCR Bead Apexing"
+    "1901": {line: "Roller Head Calendar TBR", mode: code_prefix}   # v34 BR-41: TIL / SQ / EG type blocks, then compound
+    "2201": {line: "", mode: bom_set}                                # v34 BR-41: TBR pre-assembly, same IL / SW compounds together
+    "2001": "Bias Cutter TBR"
+    "802": "Belt Cutter TBR"
+    "2101": "Body Ply Cutter TBR"
+    "1102": "Edge Gum Calendar"
+    "2403": "TBR Bead Apexing TDA 1"
+    "2404": "TBR Bead Apexing TDA 2"
+    "2405": "TBR Bead Apexing TDA 3"
+
+# ═══ V33 GENERAL RULES BR-12 / BR-14 / BR-15 / BR-16 / BR-17 (2026-10-06, user; BR-13 NCM not yet) ═══════════
+# BR-12: upstream lots consume only input ALIVE at their start (min..max aging, FEFO over all lots of the item); not
+#   enough -> wait for fresh supply; none -> flagged (outputs2/phase5_aging_no_fresh_supply.csv). Building already waits
+#   for an aging-valid kit (final repair BR-12/66), green tyres past 72 h are scrapped.
+aging_hard_block:
+  enabled: false   # v36 (user): v26 rule set + v27-v31 rules -> OFF (aging values still from CTP_Master_Aging, run_v15 CTP_AGING_SOURCE=db)
+# BR-14: no item change in the first / last window_min of a shift on upstream machines (handover / take-over).
+shift_handover:
+  enabled: false   # v36 (user): v26 rule set + v27-v31 rules -> OFF
+  window_min: 30
+  shift_starts_h: [7, 15, 23]
+  exclude_machines: []
+# BR-16: lower-changeover / longer runs when urgency is similar = the plant-day family passes (BR-8/21/25/28/32: no
+#   lot made late, then same item, family, least changeover) + MPQ pooling + 4RC spool runs; reported per machine.
+# BR-15: shift refresh = run_shift_refresh.py (shift-start WIP snapshot, live masters / downtime / plans, every shift).
+# BR-17: versioned masters -> current rows only; README_vNN carries the master-data stamp and the overrides.
+tbr_components_asap:                # BR-V9 (2026-10-01, latest_schedule/BUSINESS_RULES_LOG.md): CTP-GEN-01 for TBR
+  enabled: false                    # v9 tested 2026-10-01: identical to v5 (inputs, not targets, bind) -> baseline stays v5. TBR-only components (not compounds) start as early as inputs allow,
+  safety_h: 4                       # capped so they are within shelf life (minus safety) at their building-plan need. false = v5 behaviour.
+mixer_edd:                          # BR-V8 (2026-10-01, latest_schedule/BUSINESS_RULES_LOG.md): mixers work in due-date order
+  enabled: false                    # v8 tested 2026-10-01: -1,934 tyres vs v5 (TBR +2.0 pt, PCR -2.2 pt) -> baseline stays v5. Master/final compound lots placed first in order of LFT; start as early as inputs allow,
+  safety_h: 4                       # capped so the compound is within shelf life (minus safety) at its LFT. false = v5 behaviour.
+building_plan_feasible:             # BR-V7 (2026-10-01, latest_schedule/BUSINESS_RULES_LOG.md): re-level the building plan to what the kits allow
+  enabled: true  # v25 2026-10-06 (user: every TBM used every day): idle TBM may start its own ready row up to pull_forward_h early;                   # v7 tested 2026-10-01: -466 tyres vs v5 (see log) -> baseline stays v5. A row may start up to pull_forward_h BEFORE its plan shift (same TBM, same qty) when its kit is complete and the TBM is idle;
+  pull_forward_h: 24                # v36 (user): back to the v25/v26 value (v32 BR-1 had 8)
+  no_pull_first_h: 48               # v81 A4 (user 2026-10-12): rows planned in the plan's first 48 h start no earlier than their plan time
+holiday_aware:                      # BR-V6 (2026-10-01, latest_schedule/BUSINESS_RULES_LOG.md): production logic around ANY plant holiday
+  enabled: false                    # v6 tested 2026-10-01: no effect (see log) -> baseline back to v5. Windows = downtime_reason rows with Downtime Reason == HOLIDAY covering >= min_machines machines
+  reason: HOLIDAY
+  min_machines: 20
+  short_shelf_max_h: 48             # H1: items with shelf life <= this are NOT made before a holiday if they would age out before use -> made right after it (H3)
+  prebuild_min_shelf_h: 72          # H2: items with shelf life >= this, needed within prebuild_window_h after the holiday, are made BEFORE it
+  prebuild_window_h: 48
+  safety_h: 4                       # H1/H2 keep this margin inside the shelf life
+neighbour_aware_changeover: true   # BR-V4 (2026-10-01, latest_schedule/BUSINESS_RULES_LOG.md): phase5 checks every gap's changeover against its REAL time-neighbours (before AND after), not the last-placed item. false = v3 behaviour.
+open_machines_at_plan_start: true  # BR-V3 (2026-10-01, latest_schedule/BUSINESS_RULES_LOG.md): machines open at plan.startTime.min (28-Sep 07:00), not at first_curing (the first build slot, 23:00). false = v2 behaviour.
+schedule_open_h:         0    # 2026-09-30 USER: no runway -- every machine starts at plan start (29-Sep 07:00); stock = the 07:00 WIP (compounds in KG). Was 48 h (pre-built on paper what the WIP snapshot already holds)
+enforce_strict_horizon:  true
+max_lot_duration_h:      8.0
+
+# ==============================================================================
+# L7 -- AGING-AWARE LOT SPLIT.  (A) DEFECT REPAIR.  DEFAULT OFF = v6 byte-identical.
+# ==============================================================================
+# THE DEFECT (phase2_lot_sizing.size_lots_waveaware): lots are sized by DURATION (8h)
+# and wave/sub-wave buckets, but a lot's CONSUMER SPAN is never capped at the item's
+# aging window. SHORT_AGING_THRESHOLD_H uses a STRICT `<`, so any item with
+# max_aging >= 48h (Bead Bundle 48h, Green Tyre 48h in aging_master, Tread/SideWall/
+# Inner Liner/Calandared Roll 72h) gets NO sub-wave bucketing -- a single ~72h wave
+# becomes ONE lot whose consumers span up to 71h. The material made at the lot's start
+# is then 71h old when the last consumer takes it, past a 48h shelf. This is the L7
+# validation FAIL (204 real material lots) and a lot-sizing root of phase4 aging
+# violations. Example: BW13001 (Bead Bundle, 48h) drawn over 71h.
+#
+# THE FIX (this flag ON): additionally split a lot so its earliest->latest consumer
+# need_by span <= (max_aging - min_aging) - safety. SURGICAL -- only sub-buckets that
+# ACTUALLY violate (span > window + 0.5) are touched; everything else, incl. cap-strip
+# (already 12h-bucketed under its 24h window), is byte-for-byte unchanged, so L9 is not
+# inflated by this pass. safety defaults to the item's transfer_time (the lag phase4/5
+# already add to min_aging); aging_split_safety_h sets a flat override instead.
+#
+# DEFAULT FALSE => the split code never runs => byte-identical to the v6 baseline.
+# !! GREEN TYRES ARE EXCLUDED BY DEFAULT (aging_split_exclude_itypes). They are the
+#    BUILDING DRUM. MEASURED (split ALL item types incl. GT): building changeovers
+#    371 -> 584 (+213), makespan 33.30 -> 34.21 d (+0.91), a NEW L9 item (a GT code at
+#    104 lots), and the kit mix drifted 7018/193/62 -> 7015/196/62 -- all from splitting
+#    the 14 GT violators (the drum). MEASURED (components only, GT excluded): the 190
+#    non-GT violators clear at a fraction of that cost, GT lots/kit untouched. GT
+#    freshness is already governed by phase5/phase6 (24h override + streaming gate), not
+#    by this component-shelf-life split, and GT's L7 window uses aging_master's 48h which
+#    is looser than the plant's confirmed 24h. So the drum is held out of this pass.
+aging_aware_lot_split:   true
+aging_split_exclude_itypes: ["Green Tyres"]   # [] = split ALL incl GT (L7->0); ["Green Tyres"] = exclude the drum. Toggle here.   # item types NOT split (the drum). [] = split all.
+# aging_split_safety_h:  0.5   # uncomment for a FLAT safety (h) instead of per-item transfer
+# PRODUCTION-SMOOTHING SPLIT (2026-08-02): master/final compound lots span ~8.8 days (their 15-day
+# shelf lets the aging split never fire), so a batch pulls ~9 days of compound to its FIRST (day-1)
+# consumer -> the day-0 mixer must make 1.13M units at once (should be ~180k). Cap these to a 48h
+# consumer-span so each lot is ~2-day, spreading compound so the ramp only makes the near-term share.
+smooth_lot_span_itypes: ["MASTER COMPOUND","FINAL COMPOUND","CALANDARED ROLL","Capstrip Mother Roll","Cap Strip","Steel Belt Edge Strip","SLITTED MATERIAL","Slitted Material","Edge Gum","SideWall","Tread","Inner Liner","Steel Belt","Bead Bundle","PRE CUT ROLL MATERIAL","SHOULDER PAD","Rubberized Ply"]   # 2026-09-27 BRE-01/BRIL-01: SW/TRD/IL on a rolling 24 h building horizon
+smooth_lot_span_h_by_itype: {}   # v65: off again (v63 / v64 test {FINAL 8, MASTER 12}: more lots, +2-3 % batches, PCR -6k)   # v63 (user 2026-10-10): compound lots ~one shift of need so the next section consumes as we make (runs still back to back, no changeover)
+smooth_lot_span_h: 24    # 2026-08-03: reverted (8h buckets did NOT help edge-strip aging: 6.58->7.03%. The residual is the SLIDE fanning consumption, not lot size).
+
+# SHORT-SHELF ROPE (2026-07-30): JIT-release the 24h-shelf shared-cutter families so they
+# are cut ~buffer h before the pinned build draws them, not AEST-early (front-loaded ~24h).
+# Fixes belt/ply over-aging (Arvind + Vikram confirmed: makespan-safe vs a pinned drum;
+# rope ONLY these, NOT the 72h lines). [] = OFF = v6 behaviour. buffer = FEEDER_JIT_BUFFER_H (4h).
+jit_short_shelf_itypes: []   # 2026-08-03: JIT-feed test REVERTED (34.4d/8.3% -- JIT slides the drum MORE and re-ages downstream; 1:1 trade). Path to 0-at-low-makespan = chain re-cut (peg feeders to ACTUAL build in existing idle), NOT sliding.
+jit_short_shelf_buffer_h: 2.0
+jit_short_shelf_tail_h: 0.0
+
+# POST-ECHO SHORT-SHELF RE-CUT (2026-07-30): the makespan-neutral fix (Arvind). After the echo
+# freezes build times, re-cut stranded belt/ply lots JIT to their REAL (slid) draw, into the
+# cutter's existing idle. FEFO-guarded so it can't drop supply below any committed block. Fixes
+# the >72h lots (stranded by the drum slide) at ZERO makespan cost. false = OFF (baseline).
+post_echo_recut_short_shelf: true
+aging_pull_retime: true      # 2026-09-29: re-time component lots to their REAL (FIFO ledger) use inside min..max aging, later-only into idle
+aging_pull_margin_h: 1.0
+aging_pull_rounds: 4
+aging_split_short_max_h: 48      # 2026-09-29: items with max aging <= 48 h ...
+aging_split_short_frac: 0.5      # ... get lots spanning at most half their shelf window (real draws spread + slide)
+aging_split_qty_frac: 0.5        # 2026-09-29: short-shelf lot qty <= 0.5 x shelf-window x avg hourly demand (plan need is shift-bucketed; floor draw is continuous)
+aging_split_qty_itypes: {"SLITTED MATERIAL": 0.5, "Rubberized Ply": 0.5, "Cap Strip": 0.5, "Steel Belt": 1.0, "Bead Apex": 1.0, "Ply": 1.0}   # 2026-09-29: qty cap fraction per type (0.5 = half a shelf window of use). Compounds untouched (saturated mixers). Tested: 0.5 on belt -> kit-late 164->206, -3 pts output
+recut_short_shelf_itypes: ["Steel Belt", "Ply", "Cap Strip", "Capstrip Mother Roll", "CALANDARED ROLL", "Bead Bundle", "SLITTED MATERIAL", "Slitted Material", "Steel Belt Edge Strip", "Bead Apex", "PRE CUT ROLL MATERIAL", "Edge Gum", "Edge Strip"]   # 2026-08-03: added CALANDARED ROLL + Bead Bundle so the CASCADE re-cut re-times them to their direct consumer too (they were aging 23%/7% - not in the set = skipped).   # 2026-08-02: re-cut ALL short-shelf components (not just belt/ply). When a build shifts, EVERY short-shelf component re-times to the ACTUAL build so on-time components don't sit and age (user directive: the aging came from other components waiting for the one late one).
+
+# 2026-08-02 EXPERIMENT — REMOVE the JIT / shelf hold-back: build these kit components PURE ASAP
+# into the runway instead of holding them JIT to their consumer. Fills the cutters (belt/ply were
+# ~90% idle in the ramp) so building can start day 1. WARNING: short-shelf (24-48h) items WILL
+# over-age -- this is the test the user asked for. [] = keep JIT (default).
+# V25 BOTTLENECK RELEASE (2026-10-06, user: use every machine fully, match the plan): the saturated
+# machines (mixers 96-101% of the 10 days, 1802 BEF001 114%, bead apex 2403-2405 102%, 1803 97%) were
+# held back for 12-42 h each by the AEST / look-back / 6 h safety floor while their inputs were ready.
+# These item types now start when inputs are ready, limited ONLY by shelf life (need - (max_age - margin)).
+bottleneck_release:
+  enabled: true
+  itypes: ["MASTER COMPOUND", "FINAL COMPOUND", "Steel Belt Edge Strip", "Bead Bundle", "SHOULDER PAD"]
+  shelf_margin_h: 2.0
+# ═══ V26 MPQ (2026-10-06, user: follow CTP_Master_MPQ for every component) ═══════════════════════════
+# mpq_item_level: build_mpq_items.py maps EVERY CTP_Master_MPQ row (PCR + TBR) to the items -> inputs/mpq_item.csv;
+#   phase 2 takes the item's own minimum (no row -> no floor). Compounds keep 3 batches x batch weight.
+# mpq_pooling: small same-item demand buckets are joined (also across waves) until they reach the MPQ, within
+#   the item's shelf window and max_span_h -- so the floor applies once to real demand, not per small lot.
+# mpq_item_overrides: {item: qty} for items whose gauge-specific row cannot be resolved from the DB.
+# ═══ V28 MIXER CAPACITY CALIBRATION (2026-10-06, user) ═══════════════════════════════════════════════
+# NOT A PLANT RULE (user 2026-10-07): the 230 / 145 batches per mixer per day below are NOT used anywhere and must
+# not be used as a rule or as a benchmark. Mixing time = CTP_Master_Routing min/batch as-is (no calibration, no cap).
+# Kept only so old runs (v28-v31) remain reproducible; the switch stays OFF.
+mixer_capacity_calibration:
+  enabled: false                    # v32 (user 2026-10-06): do NOT change routing data used for mixing, no cap -> routing min/batch
+  final_batches_per_mixer_day: 230
+  master_batches_per_mixer_day: 145
+mpq_item_level: true
+mpq_pooling:
+  enabled: true
+  max_span_h: 96
+  max_span_h_itypes: {}             # v36 (user): v34 BR-37 IL 24 h cap off
+mpq_item_overrides: {}
+place_asap_itypes: []   # 2026-08-03: EMPTIED. place_asap builds PURE-ASAP bypassing the shelf cap -> it front-loaded the >=48h components up to 14-20 DAYS early (Steel Belt Edge Strip 76% expired, Final Compound 41%) = 31% real floor aging (pegged-at-actual). Now belt=96h/ply=72h so AEST-within-shelf already reaches the runway WITHOUT ageing (never builds earlier than need-max_age). Runway still fills; the front-load aging is gone.
+
+# EAGER SHELF RELEASE (2026-08-03 USER): the true short-shelf cut-breakers can't pre-build (24h) so
+# they JIT from empty -> the day-1..3 dip. Give each a rolling buffer = (its TRUE max_age - margin)h
+# ahead (per-item, shelf-capped -> CANNOT age): a 24h item -> ~20h buffer that fills days 1-2 then
+# rolls. Runs the cutters full on t-1 for days 1-2, compressing the ramp -> shorter makespan.
+eager_shelf_itypes: ["Cap Strip","SLITTED MATERIAL","Slitted Material","PRE CUT ROLL MATERIAL","Ply","Steel Belt","Bead Bundle","Bead Apex","CALANDARED ROLL","Steel Belt Edge Strip","Edge Gum","Tread","Inner Liner","SideWall"]   # 2026-08-03: extended to the WHOLE belt/component chain. The 2-day seed nets days 1-2 -> ply/belt/bead cutters sat IDLE in the runway -> ramped late -> day-3 dip. Eager release places each component's day-2..3 demand EARLY into the runway (within its OWN shelf -> no ageing, cascade keeps it fresh) so the machines RUN instead of idling. Durable: fixes the dip for every month.
+eager_shelf_margin_h: 4.0
+
+# ═══ C4 HONEST-LFT ANCHOR (phase4) ══════════════════════════════════════════════════
+# Fixes the C4 negative-slack REPORT artifact: phase3 fan-out over-links each feeder lot to
+# every GT in its wave, so the backward CPM collapses the feeder LFT onto the wave's earliest
+# GT (median 38.7 h too tight). Re-anchors each non-terminal lot's LFT to its OWN last_need.
+#   off    = v6, byte-identical (DEFAULT).
+#   report = truthful LFT/LST/slack in the report; phase5 placement byte-identical (uses
+#            LFT_place = original LFT for caps, AEST from original LST). C4 4,180 -> ~61.
+#   full   = honest LFT also drives AEST/placement (JIT-er) — NOT schedule-neutral, measured.
+honest_lft_anchor: report   # 2026-09-26 FIX #1: was `full`. `full` re-anchored every non-terminal lot's LFT to its OWN last_need - min_aging; phase1b gives EVERY BOM level the SAME need_by (the build time), so the multi-level lead time (mixing -> compound -> tread/liner -> build) vanished: 3,000 of 3,565 DAG edges had producer LFT > consumer LST, AEST was derived from those late LSTs and the whole chain bunched into 29-30 Sep. `report` keeps the precedence-consistent backward-CPM LST for placement (honest numbers stay in the report). MEASURED Sep run: built by 1-Oct 24,229 -> 48,606; kit-late 145 -> 27; aging not worse.
+# honest_est_report (M-4 FIX 2026-08-02): FORWARD-side completion of honest_lft_anchor. honest_lft_anchor
+# repairs the backward LFT fan-out; the forward est_floor still keys off the tight fan-out lft[v], so 502
+# non-terminal lots report negative slack even though a single production time EXISTS that is fresh for
+# every consumer AND after all predecessors. This recomputes truthful slack from the real feasibility
+# window and clears ONLY those proven-feasible false negatives; genuine infeasibilities (cold-start GT,
+# predecessor-late belt) stay negative and are written to phase4_genuine_infeasible_updated.csv. REPORT
+# ONLY — est/eft/lst/lft + AEST untouched, schedule byte-identical. Only active when honest_lft_anchor
+# is report|full. neg-slack 1,219 -> 717 (genuine). off = keep the forward artifact in the report.
+honest_est_report: true
+# honest_terminal_anchor (H-3 FIX 2026-07-27): anchor each GREEN-TYRE terminal to its OWN de-pulsed
+# `last_need - min_age`, not the MIN need_by over its fanned-out block set. phase2 de-pulses each GT
+# sub-lot's deadline but maps every sub-lot to the whole bucket's blocks, so the block-min collapses
+# a wave's sub-lots onto its earliest curing block (up to 72h too early) -> GT built early -> over-age.
+# OFF = v6 block-min (byte-identical). ON = honest terminal deadlines. See FLAW_REGISTRY.md H-3.
+honest_terminal_anchor: true
+
+# ═══ C6 JIT AGING-AUDIT (phase4, diagnostic-only) ══════════════════════════════════════
+# The 10,434 EXPIRED are audited against eft = producer's EARLIEST-ready (ASAP) finish. ON,
+# the audit compares against a JIT finish (freshest that still meets every consumer's
+# min_aging). Reveals the STRUCTURALLY-unavoidable core (consumer-span > aging window):
+# 10,434 -> 2,571. PURE DIAGNOSTIC — touches no est/eft/lft/slack/AEST; schedule byte-
+# identical; C4 unchanged. Does NOT make the floor fresher (floor still ASAP; its real
+# executable violations are 211 per phase5's precedence audit). off = v6 (DEFAULT).
+c6_jit_audit: on
+
+# FRC (belt cutter) campaign rules. Kept at v6's values for fidelity. INERT on CTP:
+# without belt_wire_mapping.csv, `belt_to_wire` is empty and no campaign is ever built.
+frc_campaign_max_m:  8000
+frc_belt_lot_max_mm: 400000
+frc_belt_lot_min_mm: 200000
+frc_cooldown_min:    360
+frc_pad_to_floor:    true
+
+selected_skus: []
+
+# ================================================================================
+# ROUTING RATE OVERRIDES -- USER/PLANT-CONFIRMED. Where the routing's rate is on the
+# WRONG BASIS (machine INPUT) and the demand is on another (machine OUTPUT).
+# ================================================================================
+#
+# --- CAP PLY SLITTER (machines 701, 702) -----------------------------------------
+# PLANT-CONFIRMED 2026-07-13:
+#     Cap strip slitter 1 :  33 MPM  x  12 bobbins
+#     Cap strip slitter 2 :  60 MPM  x  16 bobbins
+#     Bobbin change       :  18 min each, 4-5 times per 8 h shift
+#
+# THE BUG THIS FIXES. The routing states `60 M/MIN` and v6 divides the STRIP demand by it:
+#     13,513,491 m / 60 / 0.96  =  3,910 machine-hours  ->  272% of a 720 h month
+# That is a PHANTOM BOTTLENECK. It made the slitter the plant's #1 constraint, pushed
+# 1,116 lots (17.2%) past the horizon, and dragged a JUNE plan out to 25 AUGUST -- 752 green
+# tyres were late purely because they were waiting for cap strip that does not exist.
+#
+# The 60 was never the strip rate. It is the WEB (mother-roll) speed. The machine slits the
+# web into MANY strips at once and winds them onto BOBBINS in parallel:
+#     strip output = MPM x bobbins
+#         slitter 1 :  33 x 12  =   396 m/min
+#         slitter 2 :  60 x 16  =   960 m/min
+#
+# AVAILABILITY. A bobbin change is 18 min and happens up to 5 times per 8 h (480 min) shift:
+#     (480 - 5 x 18) / 480 = 0.8125     <- worst case; 4 changes gives 0.85
+# Folded into `efficiency` (which is what efficiency is for):  0.96 x 0.8125 = 0.78
+#
+# !! WE USE 396 -- THE **SLOWER** MACHINE -- FOR BOTH. THIS IS DELIBERATE AND CONSERVATIVE.
+#    v6 holds ONE proc_time per routed_product; it CANNOT give 701 and 702 different rates,
+#    and they differ by 2.4x. Using the FASTER rate for both would promise capacity the plant
+#    does not have. Using the slower rate for both never over-promises.
+#    Cost: slitter 2's extra capacity is not modelled, so the plan is pessimistic.
+#      conservative (396 both) :   729 machine-h  ->  51% per machine   <- what we use
+#      true (396 + 960)        :   capacity 45.7M m vs demand 13.5M     ->  29.6%
+#    Either way it is NOT a bottleneck. See MEMORY.md if per-machine rates are ever needed.
+routing_overrides:
+  "CAP PLY SLITTER":
+    proc_time:     396        # 33 MPM x 12 bobbins -- the SLOWER slitter. Conservative.
+    proc_time_UOM: "M/MIN"
+    efficiency:    0.78       # 0.96 machine eff  x  0.8125 bobbin-change availability
+
+# ═══ BR-1 LINE-SPEED ROLL MULTIPLIER (2026-08-03, user business rule -> BUSINESS_RULES.md) ═══
+# These calender products run N rolls in PARALLEL; effective M/MIN = single-strand rate x N.
+# Applied in adapt_inputs.routing() by routed_product (M/MIN rows only).
+# 2026-08-06 PLANT ROLL TABLE (user-provided -> BUSINESS_RULES.md BR-1): the edge-gum/TEG
+# calender products run N rolls in PARALLEL; effective M/MIN = single-strand rate x N.
+#   EG01=15, EG02=11, EG03=7, TEG-01=11 (belt; ply variant=4), TEG-02=9, CAP 66=11, BPG01=7.
+# TEG-01/TEG-02 were WRONGLY skipped as "TBR single-strand" -> CORRECTED (they are multi-roll;
+# TEG-01 feeds Steel Belt Edge Strip = belt = 11 rolls). EG03 was missing entirely. Both drove
+# machine 1102 to 54 d at raw 13-14 M/MIN.
+linespeed_rolls:
+  EG01: 15                     # 30 x 15 = 450 M/MIN  (edge gum calender 1102)
+  EG02: 11                     # 30 x 11 = 330
+  EG03: 7                      # 30 x  7 = 210        (was MISSING -> single-strand)
+  "TEG-01": 11                 # belt: 11 rolls (ply variant = 4); feeds Steel Belt Edge Strip
+  "TEG-02": 9                  # 9 rolls (150 mm)     (was skipped -> single-strand)
+  BPG01: 7                     # 30 x  7 = 210
+  "CAP 66-MOTHERROLL": 11      # 31 x 11 = 341  (four-roll calender 901; cap slitter already 396)
+  # 2026-08-03: the edge-gum SLITTER (m/c 601 CAP PLY CUTTER) is the belt-supply bottleneck (98.5%).
+  # Same N-strip parallelism as its EG parent -> multiply the slit outputs too, or 601 stays the wall.
+  EGSL01: 15                   # 30 x 15 = 450  (slit form of EG01 on 601)
+  EGSL02: 11                   # 30 x 11 = 330  (slit form of EG02 on 601)
+  BPGSL01: 7                   # 30 x  7 = 210  (slit form of BPG01 on 601)
+  # 2026-08-06: the 601 SLITTER (FABRIC and GUM STRIP SLITTER) outputs are SLIT FORMS of a calender
+  # parent -> inherit the parent's roll count, exactly like EG->EGSL. Plant image: GUM STRIP = the
+  # slit form of TEG-02. Traced each 601 SLITTER product to its BOM parent:
+  # Full slit-form -> input map from plant (image 8, 2026-08-06): output <- MaterialCodeGroup_IN.
+  GUM STRIP: 9                 # <- TEG-02 (9 rolls);  was raw 30 M/MIN -> 10.7d on 601
+  "STC WRAP": 9                # <- TEG-02 (9 rolls)   (space variant, distinct from STC-WRAP)
+  STC-WRAP: 11                 # <- TEG-01 (belt = 11 rolls)
+  "TB WRAP B1144": 11          # <- EG02 (11 rolls);   was raw 30 M/MIN -> 24.9d on 601 (the 44d driver)
+  TBPGUM: 11                   # <- TEG-01 (belt = 11 rolls)
+  # 2026-08-03 CHAFFER SLITTER (m/c 2401/2402, 22 M/MIN) -- slit to N strips (Width = w*N); rate x N.
+  MONOCHAF80: 4                # 80*4   (PCR IL)
+  MONOCHAF120: 4               # 120*4  (PCR IL)
+  FILLIPER2: 5                 # 75*2+90*3 = 5 strips (PCR)
+  "BRTTL SLT": 5               # FILLIPER2/BRTTL SLT 75*2+90*3
+  # TBR/TDA chaffer (apply on TBR/TDA runs; auto-skipped when absent from PCR routing):
+  SNCT001: 6                   # 75*6
+  SNCT002: 6                   # 50*6
+  SNCT003: 4                   # 120*4
+  SNCT004: 4                   # 100*4
+  EUSNCT001: 6                 # 75*6
+  EUSNCT003: 4                 # 120*4
+
+# ================================================================================
+# PIECES PER CUT -- USER-CONFIRMED. What ONE cut of a cutter actually produces.
+# ================================================================================
+# USER 2026-07-13: "cuts/min is nos/min ... 15 cut/min that is tyres/min. 1 cut gives us
+#                   b1 and b2 required for 1 tyre."
+#
+# v6 has NO `CUTS/MIN` branch at all. It fell through to the generic `endswith("/MIN")`
+# rule -> `qty / proc_time`, which SILENTLY assumes 1 cut = 1 piece.
+#
+# That is right for the PLY CUTTER (1 cut = 1 ply) and WRONG for the BELT CUTTER, where a
+# single cut yields BOTH belt plies (B1 + B2) for one tyre. The demand is raised in NOS of
+# belt ply (2.000/tyre), so the cut count is qty / 2.
+#
+# Wrong (v6, 1 cut = 1 ply): 733,804 / 15 / 0.96 = 849 h on ONE machine with 720  -> 118%
+# Right (1 cut = 2 plies)  : 366,902 / 15 / 0.96 = 425 h                          ->  59%
+# NOTE (2026-08-06): the routing spells the bias cutter TWO ways -- "BIAS CUTTER" (79 rows) AND
+# "Bios cutter" (465 rows, a typo). phase2._norm_op() canonicalises BOTH the keys below and the
+# routing operation (uppercase + collapse spaces + BIOS->BIAS) so every bias-cut row gets pieces
+# =2. Before the fix, the 465 "Bios cutter" rows silently defaulted to 1 -> m/c 2001 did 2x the
+# work (56.5 d instead of ~28 d). Keys here are spelling/case-insensitive for cutters.
+pieces_per_cut:
+  BELT CUTTER: 2      # 1 cut = 1 tyre = B1 + B2. USER-CONFIRMED.
+  BIAS CUTTER: 2      # 2026-08-03 USER: the bias cutter (m/c 2001) makes B1 + B2 in one cut (1 cut = 1 tyre). Matches "Bios cutter" too via _norm_op.
+                      # Was default 1 -> counted 2x the cuts -> 2001 falsely at 93.8% util (the belt/ply tail).
+  # PLY CUTTER: 1     # default. 1 cut = 1 ply. Do not list; 1 is the default.
+
+# ================================================================================
+# AGING FALLBACK BY ITEMTYPE -- from the plant's own table (ctp_inputfiles/aging_table_pcr.png)
+# ================================================================================
+# The per-ITEM `jkt_aging_master_pcr.csv` ALWAYS WINS. This is a FALLBACK, used only for an
+# item that master does not carry -- instead of silently taking v6's generic (0 h, 72 h).
+#
+# That default was doing real damage: `CAP 66 - CAPSTRIP` (61% of net demand) has NO row in
+# the aging master, so phase2 sized its lots believing max_aging = 72 h. Its real shelf life
+# is 24 h. Cap strip is a bare 10 mm tacky ribbon on an open bobbin -- it loses building tack
+# fast in Chennai ambient. A 3x-too-long shelf life means the scheduler builds it far too
+# early and it arrives at the TBM dead.
+#
+# PCR column, transcribed EXACTLY from the plant table. Blank = not stated -> we do NOT invent
+# one; the item keeps v6's default for that side.
+#   GREEN_TYRE  15 min / 1 day      TREAD     2 h / 3 days     SIDEWALL   2 h / 3 days
+#   BELT        -    / 1 day        PLY       -   / 1 day      INNERLINER 6 h / 3 days
+#   BEAD_APEX   -    / 3 days       CAPSTRIP  -   / 1 day      CHAFFER    -   / 1 day
+#   FINAL_COMPOUND / MASTER_COMPOUND: blank -- the master carries these; do not override.
+#
+# NOTE the table's own footnote: "Silica tread 1 day / Carbon tread 3 days". We CANNOT apply
+# that from item_type alone -- there is no silica/carbon flag anywhere in the masters -- so
+# Tread is left at 3 days. THIS IS AN OPEN QUESTION FOR THE PLANT.
+aging_fallback_by_itemtype:
+  "Green Tyres":            {min_h: 0.25, max_h: 24.0}
+  "Tread":                  {min_h: 2.0,  max_h: 72.0}
+  "SideWall":               {min_h: 2.0,  max_h: 72.0}
+  "Steel Belt":             {max_h: 24.0}
+  "Steel Belt Edge Strip":  {max_h: 24.0}
+  "Ply":                    {max_h: 24.0}
+  "Inner Liner":            {min_h: 6.0,  max_h: 72.0}
+  "Bead Apex":              {max_h: 72.0}
+  "Apex":                   {max_h: 72.0}
+  "Cap Strip":              {max_h: 24.0}    # <- fixes CAP 66 - CAPSTRIP (61% of net demand)
+
+  # !! `Capstrip Mother Roll` had NO aging row ANYWHERE, and that was catastrophic.
+  # phase5:886 `DEFAULT_MAX_AGE_H = 365 * 24.0` -> an item with no row inherits a
+  # *** 365-DAY (8,760 h) *** shelf life. phase2 gave the same item 72 h. The two phases
+  # disagreed about one item by 121x.
+  # The 8,760 h then DISABLED the safety brake in `resync_short_life_components`
+  # (phase5:2100, `_pred_cap = predecessor_finish + predecessor_max_age`), which is the only
+  # thing that holds a lot back from being ratcheted forward. 1,376 other lots WERE held by
+  # that guard; cap strip never was -- so it smeared 500 h and finished 12 July.
+  # An ABSENT ROW is the same class of bug as a BLANK CELL. See the present-but-blank rule.
+  # USER-CONFIRMED 2026-07-13: "CAP 66-MOTHERROLL -- aging 0 to max 24 hr".
+  # (I had guessed 72 h from "it is a big interleaved roll". WRONG. The plant says 24 h --
+  #  the same shelf life as the cap strip slit from it. Do not re-guess this.)
+  "Capstrip Mother Roll":   {min_h: 0.0, max_h: 24.0}    # PLANT-CONFIRMED
+  "Chaffer":                {max_h: 24.0}
+  "SLITTED MATERIAL":       {max_h: 24.0}
+  "PRE CUT ROLL MATERIAL":  {max_h: 24.0}
+
+# ================================================================================
+# EXCLUDED ITEMS -- no process data exists for these, so they CANNOT be scheduled
+# ================================================================================
+# USER INSTRUCTION 2026-07-13: "remove those, we don't have the data for those from the
+# plant, do not consider those".
+#
+# These routed_products have NO proc_time and NO proc_time_UOM in `jkt_routing_pcr 17.xlsx`
+# (and mostly no machine either). An operation with no cycle time cannot be scheduled, and
+# NO VALUE HAS BEEN INVENTED.
+#
+# USER DECISION 2026-07-13: "skip the ITEM only, NOT the full SKU demand."
+#
+# ONLY the broken ITEM is removed from the routing. THE SKU STAYS IN THE PLAN, and all its
+# OTHER components are scheduled normally. Example: SKU 1325225518111HRHB0 has 199 BOM rows;
+# exactly ONE is broken (`GT 2568 HT2` has no proc_time). The other 198 -- tread, belt, ply,
+# bead, cap strip, compound -- are perfectly good and WILL be scheduled.
+#
+# !! WHAT THIS MEANS, AND IT MUST NEVER BE HIDDEN:
+#    The curing plan still cures those tyres, and every component gets made -- but the GREEN
+#    TYRE itself is never built, because no cycle time exists for it. The plant would make all
+#    the parts and never assemble them.
+#    THIS IS REPORTED LOUDLY on every run (adapt_inputs, and again in the schedule report).
+#    It is a KNOWN, DECLARED hole -- not a silent one. That is the whole difference.
+#
+# To close it: fill proc_time / proc_time_UOM / machines in the routing master and delete the
+# entry here. `GT 2568 HT2` is ONE NUMBER away -- its machine ("3409") is already there.
+# ── MIXING MPQ (compounds): the "3 Batches" rule, wired in 2026-07-20 ──────────────
+# MOQ states MASTER/FINAL COMPOUND minimum as "3 Batches" (parsed to None -> compounds had
+# NO minimum lot, only routing batch_size). This enforces lot >= min_batches x batch_size.
+# Source file: ctp_inputfiles/mixing_mpq_ctp.xlsx.
+apply_mixing_mpq:              true
+# USER-DIRECTED 2026-07-23: do NOT use the 'mixing mpq' sheet. Master/Final compound use the
+# flat rule below (3 x ROUTING batch_size), as before. Setting this true re-enables the
+# per-mixer floor AND the per-mixer MAXIMUM (which capped 115 lots to their mixer capacity).
+use_mixing_mpq_file:           false
+mpq_tbr_from_db:               true    # 2026-09-29: TBR-only items take the plant TBR MPQ rows (JK_CTP_PPDS.CTP_Master_MPQ); unit guard on all floors
+mixing_mpq_min_batches:
+  MASTER COMPOUND: 5   # 2026-09-27 BRM-01 business rule: MPQ = 5 batches (MPQ master said 3)
+  FINAL COMPOUND: 5
+
+excluded_items: []   # 2026-07-30: edge strip now BUILT at the FIXED cap-ply-cutter rate (450/350 M/MIN),
+                     # not set aside. Rate fix applied post-adapt via apply_capply_fixes.py.
+
+# ================================================================================
+# ITEMTYPE GAP FILLS -- items that are PRODUCED but have no row in the itemtype master
+# ================================================================================
+# v6 keys MPQ floors, aging, planning_max_aging, AGE_OVERRIDE_H and the MASTER COMPOUND
+# skip on the RAW ItemType string, and it builds its map from master rows ONLY -- it
+# never canonicalises and never guesses from a code prefix. An item with no row is
+# silently untyped, and EVERY one of those rules quietly fails to fire on it.
+#
+# These are USER-CONFIRMED, not derived. Each one is written into inputs/itemtype_master.csv
+# by adapt_inputs.py and reported on every run.
+#
+# NOTE: the 226 green tyres are NOT listed here -- they are derived DETERMINISTICALLY from
+# the routing (department == BUILDING). See adapt_inputs.itemtype().
+# !! THESE WIN OVER THE ITEMTYPE MASTER. They are the user's own confirmations, and the
+#    master is KNOWN to be wrong on at least one of them (see CAP30). Every override that
+#    actually contradicts the master is printed LOUDLY on every run, so it can never rot.
+#
+# Everything NOT listed here is filled automatically from `bom.child_description`, which IS
+# the ItemType column (it agrees with the master on 99.66% of the 1,476 codes they share).
+# See adapt_inputs.itemtype().
+itemtype_overrides:
+  # ---- USER-CONFIRMED 2026-07-13 -------------------------------------------------------
+  "CAP 66 - CAPSTRIP": "Cap Strip"    # "cap 66 capstrip is capstrip".
+                                      # 61% of net demand (15.7M m, 42.9 m/tyre) and it had NO
+                                      # master row -> config's `Cap Strip: 24.0` aging policy
+                                      # never fired; the item silently inherited v6's 72 h
+                                      # default = 3x its real shelf life.
+
+  "CAP30": "Cap Strip"                # !! THE MASTER IS WRONG HERE. It says CALANDARED ROLL.
+                                      # USER: "CAP30 : Capstrip (in SMART mentioned as
+                                      # calandered roll which is not correct)".
+                                      # This override BEATS the master. Corroborated by the
+                                      # BOM: `CAP30 - CAPSTRIP` -> child_description "Cap Strip".
+
+  "TRD 1825 UXT":     "Tread"
+  "TRD 1776 RAN HPE": "Tread"
+  "SWRS63":           "SideWall"
+  "IL097":            "Inner Liner"
+  "BA16006":          "Bead Apex"
+
+  # v6 SKIPS MASTER COMPOUND in phase2 ("assumed available - never produced"). While these
+  # were untyped, `mc_skip` never fired and they were generating REAL PRODUCTION LOTS on the
+  # master mixers - on top of 49 TONNES of them already sitting in opening WIP.
+  "MT871":  "MASTER COMPOUND"
+  "MT872":  "MASTER COMPOUND"
+  "MT1511": "MASTER COMPOUND"         # not in the user's list, but same 145/145 MT#### rule
+  "MT1512": "MASTER COMPOUND"
+
+# ================================================================================
+# CTP CHANGEOVER MATRIX -- machine-id -> matrix "machine" (line) name
+# ================================================================================
+# The plant matrix `jkt_changeover_matrix_combined (1).xlsx` is keyed on a machine NAME
+# ("4 RC Calendar"), but the routing is keyed on a machine ID ("901"). The two sets have
+# ZERO string overlap, so this table is the bridge. It is built from the user's own
+# machine list (`pcr machines.png`) -- NOT guessed.
+#
+# !! REVIEW THESE. The IDs come straight from the machine list; the right-hand names are
+#    matched to the 22 line names actually present in the matrix. Where the wording differs
+#    the match is noted. Correct any line here -- nothing else needs to change.
+#
+# A machine NOT listed here, or a pair the matrix does not carry, falls through to v6's own
+# `compute_changeover_min` (mixing = 2 min, everything else = 15 min). Unchanged v6 behaviour.
+#
+# ================================================================================
+# !! MIXER CHANGEOVER = 2 MIN. PLANT-CONFIRMED 2026-07-14. THIS QUESTION IS CLOSED.
+# ================================================================================
+# USER, VERBATIM: "for mixer take the changeover 2 min for any mixer."
+#
+# 2 MINUTES. ANY MIXER. ANY COMPOUND PAIR.
+#   mixers covered : 270M, 430-1, 430-2, 440M, 310, F270   (ALL of them)
+#   compound pairs : ALL of them -- INCLUDING halobutyl transitions.
+#
+# NO CODE CHANGE WAS NEEDED, AND NONE WAS MADE. This is ALREADY exactly what v6 does:
+# `compute_changeover_min` has a department==MIXING branch -> MIXING_CHANGEOVER_MIN = 2,
+# and it fires because the plant changeover matrix has NO MIXER LINE AT ALL (22 lines,
+# not one of them is a mixer). So every mixer pair misses the matrix and lands on the
+# 2-minute rule. The right answer arrives by the right route.
+#
+# !! THIS NOTE EXISTS SO NOBODY LATER "FIXES" THE 2-MINUTE FALLBACK THINKING IT IS A GAP.
+#    It is NOT a gap. It is the CORRECT, PLANT-CONFIRMED value.
+#    DO NOT add mixer rows to the changeover matrix.
+#    DO NOT invent a halobutyl clean-out. The plant was asked; the answer was 2 min.
+#    (`mixer_changeover_min: 2` is declared in the v2 FIX FLAGS block at the top of this
+#     file purely so the number is VISIBLE. It documents v6; it does not alter it.)
+machine_to_changeover_line:
+  "901":  "4 RC Calendar"             # machine list: "4 Roll Calender"
+  "1101": "Roller Head Calendar PCR"  # machine list: "Roller Head Calender PCR"
+  "1001": "Triplex PCR SW"            # machine list: "Triplex Extruder PCR"    (makes SideWall)
+  "1002": "Quintoplex PCR Tread"      # machine list: "Quintoplex Extruder PCR" (makes Tread)
+  "1103": "Ply Cutter PCR"            # machine list: "Textile Ply Cutter PCR"
+  "1104": "Fisher Cutter PCR"         # machine list: "Fischer Ply Cutter PCR"  (not in routing today)
+  "801":  "Belt Cutter PCR"           # exact
+  "601":  "Cap Ply Cutter"            # exact. NB the routing runs op EDGE GUM on 601, and the
+                                      #   machine list confirms 601 outputs "Cap ply, Edge gum".
+  "2401": "Chaffer Slitter"           # machine list: "Chafer slitter"  (matrix spells it "Chaffer")
+  "2402": "Chaffer Slitter"
+  "1201": "PCR Bead Winding"          # machine list: "Bead Winding PCR"
+  "201":  "PCR Bead Apexing"          # machine list: "Bead Apexing PCR" (ids 0201/0202)
+  "202":  "PCR Bead Apexing"
+  # ---- TBR lines (2026-09-30): the live DB matrix carries them; each machine matched to the
+  #      ONE line whose item codes it runs (1901 14/14, 2001 6/6, 802 26/31, 1801 23/23, ...) ----
+  "1901": "Roller Head Calendar TBR"
+  "2001": "Bias Cutter TBR"
+  "802":  "Belt Cutter TBR"
+  "1801": "Duplex TBR Tread"
+  "1803": "Quadraplex TBR SW"
+  "2101": "Body Ply Cutter TBR"
+  "1102": "Edge Gum Calendar"
+  "2403": "TBR Bead Apexing TDA 1"
+  "2404": "TBR Bead Apexing TDA 2"
+  "2405": "TBR Bead Apexing TDA 3"
+  # ---- deliberately NOT mapped: the matrix carries no line for these ----
+  #   701, 702         Cap Strip Slitter   -> no matrix line
+  #   2501, 2502       Chafer doubling     -> no matrix line
+  #   2001             Bias cutter         -> matrix has only "Bias Cutter TBR" (TBR, not PCR)
+  #   3401..3411       Building            -> no matrix line
+  #   curing presses   Curing              -> no matrix line (curing is a pinned echo anyway)
+  #   270M/430-1/430-2/440M/310/F270  Mixers -> no matrix line; v6's dept-MIX rule gives 2 min
+
+# ================================================================================
+# PLANNING MAX AGING -- DELETED 2026-07-14. (A) DEFECT. DO NOT RE-ADD IT.
+# ================================================================================
+# `planning_max_aging_h` USED TO LIVE HERE, and adapt_inputs.py wrote it out as
+# inputs/planning_max_aging.csv in v6's master schema. BOTH ARE NOW GONE.
+#
+# WHY. **I INVENTED THAT FILE. THE PLANT NEVER SUPPLIED ONE.** Its own Notes column
+# said "from ctp_v6/config.yaml" -- it was CONFIG LAUNDERED INTO A CSV TO LOOK LIKE A
+# PLANT MASTER. Every other file in inputs/ is a reshape of something the plant sent.
+# That one was a policy I made up, dressed as data, and then read back as if it were
+# authority. That is the whole defect.
+#
+# IT WAS LIVE, NOT DEAD. phase4_cpm.py:370-377 read it and built `planning_max_map`,
+# which feeds AEST via `get_effective_max_aging = min(chemistry_max, planning_max)`.
+#
+# IT WAS HARMLESS BY COINCIDENCE, NOT BY CONSTRUCTION -- which is what made it a
+# LANDMINE. CAP30 and CAP STRIP 28 carry 72 h CHEMISTRY while the invented file said
+# Cap Strip = 24 h. It only stayed inert because CAP30 is not routed and not a BOM
+# child, so it never produces a lot. The day the plant loosens CAP 66 - CAPSTRIP to
+# 72 h, this file would have silently cut it back to 24 h on 136 lots and NOBODY WOULD
+# HAVE KNOWN WHY.
+#
+# DELETION IS A PROVABLE ZERO SCHEDULE DELTA. Verified 2026-07-14 against the real
+# inputs, over the ONLY set that can ever produce a lot (routed AND a BOM child):
+#     policy-mapped items                                : 1,820
+#     PRODUCIBLE items where min(chem, planning) != chem :     0   <- zero. none.
+#     the single item where planning BOUND (CAP30, 72 -> 24 h): NOT routed, NOT a BOM
+#         child -> never enters demand -> never becomes a lot -> phase4 never sees it.
+# With the file gone, `load_planning_max_aging_map` returns {} and
+# `get_effective_max_aging` falls back to chemistry max for every item. AEST windows
+# are IDENTICAL, item for item.
+#
+# v6 handles the file MISSING gracefully and says so out loud (phase4_cpm.py:142):
+#     "planning_max_aging policy empty - AEST will use chemistry max_aging only"
+#
+# IF A REAL PLANNING-AGING POLICY IS EVER SUPPLIED BY THE PLANT, it belongs in
+# ctp_inputfiles/ as a plant master with a real provenance -- NOT here, and NOT
+# synthesised out of this config.
+
+# (B) v6 has a LEVELED building mode, shipped OFF. Its lead is 3.0 d = BTP GT freshness.
+# CTP GT lives 24 h. Never tested on CTP with a matching lead.
+building_level:            false   # TESTED 2026-07-14: true -> makespan 36.2 -> 64.6 d. v6's note was RIGHT. LEAVE OFF.
+building_level_lead_days: 2.0
+
+building_time_phased:      false   # REVERTED to v6
+building_tp_bucket_h:      24.0
+building_tp_slack:         1.0
+
+# ================================================================================
+# (C) IDEA 1 -- EARLIEST-FINISH-TIME BUILDING SPREAD.  *** OFF. USER-DIRECTED 2026-07-18. ***
+# ================================================================================
+# WAS ON (2026-07-17) for the shorter 35.85 d number. TURNED OFF 2026-07-18: measured, it is a
+# pure makespan<->aging trade with NO effect on how much is produced:
+#     ON  : 35.85 d | GT over-24h 64.0% | real demand fulfilled 336,980 / 99.9%
+#     OFF : 38.79 d | GT over-24h 55.0% | real demand fulfilled 336,980 / 99.9%  (IDENTICAL)
+# Both build every buildable green tyre; EFT only changes WHEN/WHERE. OFF is the more honest
+# setting per the standing rule (correctness beats makespan): same 99.9% production, 9 pp fresher
+# tyres, and 38.79 d is still fine. The 35.85 was close to the physical floor anyway.
+# WAS false (= v6 cap-and-spill FFD, bit for bit). NOW TRUE. A DEVIATION FROM v6, and a
+# (C) ALGORITHM -- a NEW rule, not a repair. v6's packer executes exactly as written; we are
+# choosing a different rule.
+#
+# THE DEFECT IT TARGETS -- THE BINDING ONE. MEASURED on the shipped (chrono) state:
+#   GT idle delay (actual start - material ready): median 34.6 h, mean 60.6 h, max 310 h,
+#     TOTAL 50,433 h. Only 76 of 832 lots (9.1%) start within 1 h of being ready.
+#   MEANWHILE building sits 37.7% IDLE (3,418 of 9,075 machine-hours over the same span).
+#   mean machines USED per GT code = 1.11, mean ALLOWED by routing = 3.43. 30 of 35 codes
+#   use fewer machines than routing permits.
+#   => Lots queue 50,433 h while machines idle 3,418 h. The FFD packer opens ONE machine per
+#      code and keeps feeding it to the ~545 h fair-share cap. ON = each lot goes to the
+#      routing-eligible machine with the EARLIEST FINISH, so a code fans out as far as its
+#      volume needs and no further.
+#
+# MEASURED 2026-07-17 -- controlled A/B, config md5-restored each cell, invariants held in
+# every cell (press double-book 0, precedence_neg_gap 0, curing plan IDENTICAL/verbatim):
+#   ON THE PRE-CHRONO BASELINE (40.12 d) -- HISTORICAL, superseded:
+#     OFF 40.12 d | 197 chg | 3/30 codes >=2 machines || ON 36.98 d | 312 chg | 21/30
+#   ON THE SHIPPED (chrono) BASELINE -- THESE ARE THE LIVE NUMBERS:
+#     OFF (chrono only)   38.79 d | GT over-24h 55.34% | 197 bld changeovers
+#     ON  (chrono + EFT)  35.85 d | GT over-24h 64.25% | 307 bld changeovers
+#     ON  + dispatch lft  35.54 d | GT over-24h 63.91% | 307 bld changeovers
+#
+# !!! THE COST IS REAL AND IT IS AGING. READ THIS BEFORE DEFENDING THE NUMBER. !!!
+#   -2.94 d of makespan costs +8.9 pp of GREEN-TYRE OVER-AGE (55.34% -> 64.25%) and +110
+#   building changeovers. This VIOLATES the standing rule (correctness beats makespan) on its
+#   face; it is shipped ONLY because the user directed it explicitly after being shown the
+#   trade twice. It is NOT a free win. wip_netting_chronological (CTP #26) is the free win;
+#   this is not.
+#   WHY THE TRADE EXISTS (it is not an artifact): building has 37.7% idle it CANNOT SPEND,
+#   because the PRESS bank is 88.2% booked. Building faster does not get tyres cured sooner --
+#   it gets them BUILT sooner and then they WAIT for a press that is already full, and age.
+#   THE PRESS IS THE WALL. Flexibility in building just runs you into it earlier.
+#
+# WHAT IT DOES NOT FIX:
+#   * It does NOT protect sole-eligible codes -- it piles flexible work onto 3409 and DELAYS
+#     GT 2618 RAN ATB (the code that starves critical press 4839) from 36.9 h to 45.7 h queue.
+#   * At 35.85 d building is NO LONGER the constraint: 89.4% of GT lots are material-late
+#     before any machine contention. UPSTREAM COMPONENT SUPPLY binds beyond this point.
+#   * It cannot fix rate-mismatch: GT T1457 STAR is cured on 3 presses in parallel but has
+#     only 2 routing-eligible TBMs. That is a DATA fix (ask the plant for alt TBMs).
+# NOT building_level (that capped daily qty and blew the makespan 36 -> 64 d).
+# NOT building_time_phased (measured IDENTICAL 36.98 d, but +26 more changeovers -- redundant).
+# See the block comment at BUILDING_SPREAD_EFT in phase5_forward_placement_v2.py.
+building_spread_eft:       false
+# Sticky band, minutes: among machines finishing within this of the best, prefer the one
+# already running this code (no changeover), then least-loaded. Stops EFT shredding
+# campaigns into setups for nanosecond gains. Default 40 = the same-size changeover.
+# L-8 NOTE (2026-07-27): "40" is NOT "the same-size changeover" anymore -- the real per-TBM same-size
+# changeover is 22-28 min (inputs/building_changeover.csv). This band is inert while building_spread_eft
+# is OFF; if ever turned ON, set this to ~22-28 to match, else it suppresses beneficial machine switches.
+building_spread_eft_sticky_min: 40.0
+
+
+# ================================================================================
+# CTP DEVIATION #32 -- LATENESS-GATED TAIL SPILL  (the "right TBM for the right SKU")
+# ================================================================================
+# THE DEFECT. Every gate that decides how many TBMs a GT code gets is a MONTH TOTAL with
+# NO TIME AXIS:
+#   phase5_forward_placement_v2.py:2570  MACHINE_CAP_NS = LOAD_CAP * 1.06 = 608.3 h
+#   phase5_forward_placement_v2.py:2864  avail = [m in chosen if machine_load[m] < CAP]
+#   phase5_forward_placement_v2.py:2932  m = min(avail, key=machine_load)
+# MEASURED on the 2026-06 CTP PCR plan (baseline 34.815 d):
+#   TBM 3406 ended the month at 460.4 h -- 147.9 h UNDER the cap -- so the spill at :2865
+#   NEVER FIRED. GT1564 NEO (5,926 tyres, SEVEN eligible TBMs) and GT1824 XPC1 (1,378
+#   tyres, three eligible) therefore ran their ENTIRE volume on 3406 alone. 3406's month
+#   total is low only because it is idle EARLY (10.21 d of its 11.37 d idle is before day
+#   20); from day 24 it is back-to-back with six codes and finishes day 32.12, LAST of 11,
+#   while 3405 finishes 27.82 with 242 idle hours. Press 4836 starves on it and sets the
+#   34.815 d makespan.
+#
+# WHY NOT JUST SPREAD. building_spread_eft (naive earliest-finish over all eligible TBMs)
+# was MEASURED at +16.4 pp of over-24 h green-tyre age, because it pulls all 911 GT lots to
+# fresh_floor = LFT - 48 h and every tyre then waits its whole shelf life for a press.
+# CORRECTNESS BEATS MAKESPAN -- that is a REJECT. And the phase-4 LFT cannot be the gate
+# either: 872 of 911 GT lots already have earliest > due, phase5 prints late-vs-curing 911,
+# so "finish > LFT" fires for everything and degenerates back into the naive spread.
+#
+# THE RULE. A post-assignment, pre-layout REPAIR. Three gates, ALL must pass:
+#   1. TAIL     -- only lots finishing within building_tail_spill_tail_h of the BUILDING
+#                  makespan. This is a makespan repair, not a load balancer.
+#   2. LATENESS -- only lots the MACHINE kept waiting (start - ready) longer than
+#                  building_tail_spill_tol_h. `ready` = max(kit_ready, fresh_floor, T0,
+#                  material_ready). A lot waiting on MATERIAL is never moved.
+#   3. MAKESPAN -- accepted only if it strictly cuts max(end(donor), end(receiver)) by
+#                  >= building_tail_spill_min_gain_h, i.e. the receiver is genuinely idle
+#                  at that instant. Deterministic tie-break on machine id.
+# AGING GUARD (pin_starts): every NON-moved lot keeps its pre-repair start as a FLOOR, so
+# emptying the donor can never pull another green tyre EARLIER (= older at the press).
+# Moved lots are still floored at `earliest`, so NO tyre is ever built before its freshness
+# floor. Every move is written to outputs2/phase5_tbm_spill_moves.csv with the gate values
+# that admitted it -- the schedule stays explainable lot by lot.
+#
+# Bounded by ROUTING eligibility only -- it can never put a code on a TBM the plant's
+# routing does not allow. Set building_tail_spill_rounds: 0 to prove the OFF-equivalence.
+#
+# REVERT PATH (documented 2026-07-24):
+#   1-line revert : building_tail_spill: false  -> phase5 is bit-identical to the
+#                   pre-change run (VERIFIED twice: 34.815 d / 47.08 % >24 h /
+#                   18.82 % >48 h / 21.60 h median / cured 385,772 / 7018-193-62).
+#   full revert   : copy _tbm_exp/phase5_forward_placement_v2.py.BASELINE over
+#                   ctp_v6_v2/phases/phase5_forward_placement_v2.py and
+#                   _tbm_exp/config.yaml.BASELINE over ctp_v6_v2/config.yaml.
+#   SHIPPED RESULT: 33.349 d | >24 h 46.48 % | >48 h 18.58 % | median 21.27 h
+#                   | cured 385,772 | kit READY 7018 / SHORT 193 / UNKNOWN 62
+#                   | +8 building changeovers (363 -> 371) -- the only cost.
+building_tail_spill:            true
+# RULE A (machine-end shortening) -- MEASURED STRICTLY DOMINATED by rule B on this plan:
+#   A only  34.143 d / 47.49 % >24 h / 19.12 % >48 h
+#   A + B   33.375 d / 46.85 % / 18.79 %
+#   B only  33.349 d / 46.48 % / 18.58 %   <- SHIPPED
+# Kept and defaulted OFF; enable only if a future mix has a machine-end tail rule B's
+# idle-absorption cannot reach.
+building_tail_spill_tail_rule:  false
+building_tail_spill_rounds:     12
+building_tail_spill_tail_h:     120.0
+building_tail_spill_tol_h:      8.0
+building_tail_spill_min_gain_h: 1.0
+building_tail_spill_pin_starts: true
+# JIT LANDING. After a move is accepted, binary-search the LATEST start the receiver can
+# give the moved lot while the pair-end stays at the value that justified the move.
+# MEASURED: OFF -> 34.143 d but over-24 h 47.08 -> 47.83 % (REJECTED under CORRECTNESS
+# BEATS MAKESPAN). The moved tyre was being built as early as the receiver allowed and
+# then waiting for its press. Keep ON.
+building_tail_spill_jit_landing: true
+# RULE B -- IDLE-ABSORPTION PULL-FORWARD. Rule A can only shorten a machine's END, so a
+# MID-QUEUE lot that starves a press mid-horizon is invisible to it. MEASURED:
+# GT1824 XPC1_L0006 is kit-ready day 24.98 (material_ready is EMPTY for ALL 911 GT lots --
+# the wait is 100% machine queue) and 3406 starts it day 28.30; press 4836 idles 1.739 d
+# waiting for it. Rule B moves such a lot ONLY into genuine idle on an eligible machine:
+# no other lot may be delayed (pull_harm_h = 0), the building makespan may not grow, and
+# the lot lands as LATE as the minimum gain allows -- never "as early as possible".
+building_tail_spill_pull_forward:    true
+building_tail_spill_pull_tol_h:      48.0
+building_tail_spill_pull_min_gain_h: 12.0
+building_tail_spill_pull_harm_h:     0.0
+# AGING CAP (h): the most a rule-B move may pull a green tyre FORWARD. 0 = uncapped.
+# MEASURED uncapped: over-48 h 18.82 -> 19.20 % and every newly-over-48 tyre traced to
+# four big pulls (GT 1634 XPC TATA 78 h/64 h, GT 1894 MAX 55 h, GT 1482 UHL 41 h), while
+# the move that bought the makespan (GT1824 XPC1_L0006) needed only 38 h.
+building_tail_spill_pull_max_h:      0.0    # 0 = uncapped; the last_need ROPE below subsumes it (MEASURED: cap 24/40 h is strictly worse on BOTH axes)
+# THE ROPE. Use phase2's last_need (the LAST curing block that consumes the lot) as the
+# drum signal instead of the phase4 LFT. MEASURED over the 911 GT lots:
+#   median(last_need - phase4 LFT) = +41.5 h ; median(build start - last_need) = +13.2 h.
+# The LFT calls all 911 lots late (phase5 prints late-vs-curing: 911) so it cannot gate
+# anything; last_need dates them sanely. With this ON a moved lot may be pulled forward
+# only as far as last_need - dur -- i.e. up to the press's own need time and NO FURTHER.
+# That is the difference between a ROPE and a SPREAD.
+building_tail_spill_use_last_need:   true
+
+# ================================================================================
+# CTP DEVIATION #36 -- QUEUE-WAIT TRIGGER (G1), NEED-BOUNDED DISPLACEMENT (G2),
+#                     HEAD-LOT CONTENTION FIX (G3).      ALL DEFAULT OFF.
+# ================================================================================
+# WHAT CTP #32 STILL MISSES, MEASURED ON THE SHIPPED 33.315 d RUN
+#   press 4836 (critical) = 2.196 d late start + 1.544 d internal idle + 29.574 d work.
+#   plan.csv starts ALL 86 presses at T0+0.00 h -- BOTH losses are the scheduler's.
+#
+#   CASE A (the 2.196 d).  4836's first block is SKU 1325222416098VURL0 = GT 2256 ROYL.
+#     GT 2256 ROYL_L0001: earliest 36.94 h, due -1.50 h, last_need 32.0 h, BUILT 51.22 h.
+#     ~37 h of that is a HARD component floor (cap strip on slitter 702, 97 % busy).
+#     The other 14.28 h is pure CONTENTION: TBM 3401 was 93 % busy on GT 2157 ROYL KIA
+#     while GT 2256 ROYL had SIX eligible TBMs. Rule B never saw it -- 14.28 h <= its
+#     48 h queue gate AND 24.5 h <= its 48 h drum gate. -> G3.
+#
+#   CASE B (the 1.544 d).  All three internal gaps on 4836 wait on GT1824 XPC1.
+#     GT1824 XPC1_L0001: earliest 404.33 h, due 428.22 h, last_need 429.72 h,
+#     BUILT 492.37 h = 88.03 h of pure machine queue and 62.65 h past its own need,
+#     while TBM 3406 was ~50 % idle in the window. It IS a rule-B candidate (both 48 h
+#     gates pass) -- it was refused at the DISPLACEMENT gate. -> G2.
+#     (Root cause proven with building_tail_spill_debug: true ->
+#      outputs2/phase5_tbm_pullB_debug.csv)
+#
+# G1 -- the two rule-B admission gates, split out of the single 48 h _pull_tol_h.
+#       0 = fall back to building_tail_spill_pull_tol_h => CTP #32 EXACTLY.
+building_tail_spill_pull_queue_h:    0      # min (start - max(earliest, material_ready))
+building_tail_spill_pull_drum_h:     0      # min (finish - last_need)
+# G2 -- how far a lot ALREADY ON the receiver may be displaced by the insert.
+#       strict     : not at all (CTP #32). "There is a real idle window here."
+#       last_need  : it may finish later, but ONLY inside its OWN last_need. We spend a
+#                    neighbour's DRUM SLACK, never its need time. Still a rope, and a
+#                    displaced tyre is built LATER = FRESHER, not older.
+building_tail_spill_pull_harm_mode:  strict
+# G3 -- HEAD-LOT CONTENTION FIX. Reuses rule B's trial-placer verbatim (so the receiver-end
+#       guard, the last_need rope and the displacement gate all still apply) with gates
+#       re-sized for the start of the horizon. REQUIRES building_tail_spill_pull_forward.
+building_tail_spill_head_fix:        false
+building_tail_spill_head_window_h:   168.0  # H1: lot must FINISH inside this from T0
+building_tail_spill_head_tol_h:      4.0    # H3a: min queue wait to be a candidate
+building_tail_spill_head_min_gain_h: 2.0    # H3b: min hours pulled forward
+# RULE D -- SAME-MACHINE CAMPAIGN RESEQUENCE. The move rules A/B/C structurally cannot make:
+# they all REASSIGN a lot to a different TBM (`if _m2 == _m: continue`), but the layout key
+# (due_day, ITEM CODE, due, lot_id) is GLOBAL, so all 11 TBMs walk the due_day axis in
+# lockstep and a lot lands at nearly the same wall-clock time whichever machine it is on.
+# MEASURED with building_tail_spill_debug: 441 of 584 head probes and BOTH case-B probes
+# were refused at gate (i) "no gain" -- the receiver was no earlier. The wait is in the
+# wrong PLACE IN THE QUEUE, not on the wrong machine.
+# Rule D promotes a whole item-code CAMPAIGN inside its own machine queue. Moving a maximal
+# run to a run boundary cannot increase the changeover count (asserted every trial), the
+# machine end may not grow, and every displaced lot must still finish inside its own
+# last_need (requires building_tail_spill_pull_harm_mode: last_need to displace anything at
+# all). Promotion is MINIMAL (latest workable slot) and JIT-landed (as late as the hole
+# allows = as fresh as possible).
+# ================================================================================
+# CTP DEVIATION #40 (T2) -- RULE E: SAME-MACHINE SINGLE-LOT PULL-FORWARD.  OFF.
+# ================================================================================
+# Rules A/B/C are all machine REASSIGNMENTS (`if _m2 == _m: continue`), so a lot
+# can never be pulled earlier ON ITS OWN MACHINE. Rule D can, but only as a whole
+# item-code CAMPAIGN. Rule E is the missing single-lot case: reposition ONE late,
+# queue-bound lot into a genuine idle window on the machine it is already on,
+# keeping the CTP #32 rope (start >= last_need - dur), the idle-absorption test
+# and, unlike F2, an explicit CHANGEOVER-MAY-NOT-GROW guard.
+building_tail_spill_same_machine: false   
+building_tail_spill_same_machine_queue_h:  8.0    # E1 min queue wait to be a candidate
+building_tail_spill_same_machine_drum_h:   0.0    # E2 min hours past its own last_need
+building_tail_spill_same_machine_gain_h:   2.0    # (i) min hours pulled forward
+building_tail_spill_same_machine_co_guard: true   # E5 machine CO count may not grow
+
+building_tail_spill_reseq:           false
+building_tail_spill_reseq_tol_h:     8.0    # D1: campaign must be this far past its last_need
+building_tail_spill_reseq_gain_h:    2.0    # min hours of lateness the promotion must remove
+# AUDIT -- per-candidate / per-target rejection census -> outputs2/phase5_tbm_pullB_debug.csv
+building_tail_spill_debug:           false
+
+
+# ================================================================================
+# CTP DEVIATION #37 -- DRUM PRIORITY (H1 / H2).            *** DEFAULT OFF. ***
+# ================================================================================
+# THE PREMISE, measured on inputs/plan.csv (reproduce: _drum_exp/premise.py):
+#   63 of 86 presses are booked >= 99.5 % of the 720 h horizon. A press with ZERO slack
+#   cannot recover from starvation -- any idle goes straight to the makespan; a press
+#   with slack absorbs it. ALL 10 of the latest-finishing presses are in that group.
+#   In the shipped 33.315 d run those 63 lose 920 h of late start + 2,674 h of internal
+#   idle (mean late start 14.60 h, mean total idle 57.05 h) while the 23 presses WITH
+#   slack finish on average day 24.84 -- about 8 days early.
+#
+# THE SIGNAL: press slack = 720 h - hours plan.csv books on that press INCLUDING its
+#   CHANGEOVER shifts. A lot's criticality = the MINIMUM slack over the presses that
+#   consume it, joined block_id -> pressNo exactly the way phase1b numbers blocks
+#   (phase1b_demand_explosion.py:161). Coverage 364,919 / 364,919 lot-block rows.
+#
+# DEGENERACY (measured, _drum_exp/degeneracy.py -- do not skip this check):
+#   press slack 38 distinct values, 20 presses at exactly 0.00; lot criticality 24
+#   distinct values with a 53.2 % largest class. It reorders GT codes on 30 of 30
+#   due_days and discriminates 205 of 273 dispatch tie-groups. Real key, coarse by
+#   design -- the coarseness is what keeps campaigns whole.
+#
+#   off  -- no term added anywhere; both key expressions are the v6 literals (bit-exact).
+#   gt   -- H1. Only GREEN TYRES lots are scored; everything else takes the neutral 0.0.
+#   all  -- H2. Every lot is scored, so the drum signal propagates to the components.
+#           This is the one that reaches extruder 1002 / sidewall 1001, whose heads are
+#           a SINGLE tie-group decided by item-code ASCII (TRD 1402 ... TRD 2776 all run
+#           before TRD T1457 STAR because "T" sorts after every digit; measured 47.18 h
+#           start, queue position 25 of 266, 44.25 h after its compound was ready).
+drum_priority:              off     # off | gt | all
+# 0 = use the raw slack hours. >0 = bucket into bands of this width (coarser = fewer
+# reorderings = safer for changeovers). 3.6 makes it binary drum / not-drum.
+drum_priority_band_h:       0.0
+drum_priority_layout:       true    # apply to the BUILDING layout key (per-CODE min)
+drum_priority_dispatch:     true    # apply to the TOPOLOGICAL dispatch key (per-LOT)
+drum_priority_horizon_h:    720.0   # the plan horizon slack is measured against
+# HOW A PRESS IS SCORED before the per-lot MIN is taken.
+#   slack     -- 720 h - plan booking. Non-circular but MEASURED DEGENERATE AT THE TOP:
+#                20 of 86 presses are booked to exactly 720.00 h, so the most-critical
+#                class is a 20-way tie and press 4836 -- the one that actually SETS the
+#                33.315 d makespan -- is booked 719.78 h and therefore ranks BEHIND all
+#                twenty. That is why the layout leg improves 11 of the top 12 presses
+#                and still loses 0.500 d: it de-prioritises the critical press.
+#   press_end -- minus the press's observed END TIME in the run snapshotted at
+#                drum_priority_feedback_dir. One predictive-reactive feedback pass;
+#                45 distinct scores, largest class 9.9 %.
+drum_priority_rank:         slack   # slack | press_end
+drum_priority_feedback_dir: ""      # required for rank=press_end, e.g. _drum_exp/outputs2_BASELINE
+# NOTE: incompatible with building_tail_spill_reseq (rule D) -- phase5 aborts if both
+# are on, because rule D's layout override assumes the 4-slot CTP #35 key.
+
+
+# ================================================================================
+# CTP DEVIATION #26 -- CHRONOLOGICAL WIP NETTING.  *** ON. USER-DIRECTED 2026-07-17. ***
+# ================================================================================
+# WAS: false ("REVERTED to v6 (pro-rata smear)"). NOW TRUE. This is a DEVIATION FROM v6.
+#
+# WHAT v6 DID (the smear) AND WHY IT IS WRONG. Opening WIP is the ONLY way physical floor
+# stock enters this model -- phase5's _material_ready_ns (:1708) counts ONLY predecessors
+# `in schedule` (i.e. lots PRODUCED this month); opening stock is NEVER a term in it. So HOW
+# phase1c distributes the netting IS the whole ballgame. v6 spread each item's saving EVENLY
+# across every in-window demand row, so stock PHYSICALLY ON THE FLOOR AT t=0 was rationed
+# across the item's whole aging window instead of covering the demand due FIRST.
+# The code's own measured example (see the block comment at phase1c_mrp_netting.py:526):
+#     IL5 WIP on floor at t=0     : 3,729 kg
+#     IL5 GROSS demand, first 24 h: 2,479 kg   <- floor stock covers this OUTRIGHT
+#     pro-rata ratio              : 0.6188
+#   => the first 24 h was netted only 38%, 1,534 kg SURVIVED, and A MIXING LOT WAS CREATED
+#      THAT OCCUPIED A MIXER AT HOUR 0 AND GATED THE FIRST GREEN TYRE -- TO MAKE COMPOUND
+#      THE PLANT ALREADY HAD. Same shape: S53 (0.379), T15 (0.730), PCRT15 (0.654), B278 (0.639).
+#
+# ON = consume the saving CHRONOLOGICALLY, earliest need_by first (the ordinary MRP rule).
+#
+# INVARIANT (verified in the run log, both modes): the two modes remove the IDENTICAL TOTAL
+# -- 2,577,439 units. ONLY WHICH ROWS are netted changes. The cascade, the shelf-life window
+# and WHICH rows are eligible are all untouched. It costs NOTHING in material terms: the
+# stock is already on the floor.
+#
+# MEASURED 2026-07-17 -- matched A/B, both cells `--from phase1c --force`, config restored to
+# a verified md5 after each run, and the result REPRODUCED twice on separate runs:
+#     OFF (v6 smear)   40.12 d | GT over-24h 57.77% | 197 bld chg | curing plan REFERENCE
+#     ON               38.79 d | GT over-24h 55.34% | 197 bld chg | curing plan IDENTICAL
+#   Also: first material day 2.68 -> 1.32 | building first start 2.72 -> 1.32
+#         material-late median 47.5 h -> 22.6 h | all invariants hold | press double-book 0
+#
+# WHY THIS ONE IS SAFE WHERE OTHER LEVERS ARE NOT: it is the ONLY lever measured that improves
+# makespan AND AGING TOGETHER (-1.33 d and -2.43pp over-age), at ZERO extra changeovers, with
+# the curing plan byte-identical. Every other lever trades aging for days:
+#     building_spread_eft  36.98 d but over-age 62.58%
+#     best_press_curing: the "41.27 d (LOSES)" here is STALE -- measured on the OLD 40.12 baseline
+#       (phase6-only, stale upstream). On the CURRENT shipped state (chrono+eft+cascade) an offline
+#       bit-exact replay of best_press_reassign gives 32.69 d (FASTER, -3.16 d, all scheduling
+#       invariants valid). It is DISQUALIFIED ON AGING, not makespan: GT over-age 64.0% -> 97.9%
+#       (green age median 35 h -> 146 h). The makespan gain IS the aging loss. Do not quote 41.27.
+# Per the standing rule (correctness beats makespan) this is closer to a DEFECT FIX than a
+# policy choice -- it stops the model disbelieving stock the plant physically has.
+#
+# NOTE -- COUPLING: the 2026-07-17 aging_master edit (GT max age 24 -> 48 h) AMPLIFIES the
+# smear, because phase1c uses max_h as the netting window (`is_in_window`, :486): doubling
+# GT max_h doubles the rows the smear divides across, thinning every early row further.
+# Chronological removes that coupling entirely.
+# USER DIRECTIVE 2026-07-22: phase1c must match v6_wave_p2's algorithm EXACTLY (see the
+# header of phases/phase1c_mrp_netting.py). v6 has NO chronological path -- it always
+# applies the pro-rata SMEAR. This flag is therefore now INERT (phase1c no longer reads
+# it) and is pinned false so config states the truth: the smear is in force, as in v6.
+wip_netting_chronological: false
+
+# ================================================================================
+# CTP DEVIATION #28 -- CONVERGENCE LOOP: build against the press time the press HAS
+# ================================================================================
+# DEFAULT OFF = today's behaviour, bit for bit.
+#
+# THE DEFECT this closes. phase4/phase5 aim every green tyre at the press start time
+# in plan.csv. phase6 then re-times the press -- MEASURED: 6,309 of 6,975 blocks slide
+# LATER, median 49.5 h, max 80.3 h -- and phase6 is the LAST phase, so building is
+# never told. The green tyre is therefore built ~2 days before the press can take it.
+#   MEASURED at the baseline (schedule_open_h 0):
+#     green-tyre age at the press: median 45.6 h | p90 72.3 h | worst 103.0 h
+#     75.5% of tyres cured past their 24 h shelf life
+#     17,104 green tyres standing on the floor (time-weighted). Little's Law closes:
+#       17,104 tyres / 425.3 tyres-per-h = 40.2 h  ==  the measured mean age.
+#
+# WHAT IT DOES. Re-runs phase4 -> phase5 -> phase6 with `need_by` replaced by phase6's
+# OWN revised press start times, until those times stop moving. It changes NO RULE in
+# any phase -- it re-runs the same machinery against a corrected input. phase6 always
+# re-reads plan.csv for orig_start, so the press can never be pulled EARLIER than plan.
+#
+# COST: one extra phase4+phase5+phase6 pass per iteration (~60 s each).
+
+
+dispatch_priority: lft   # 2026-08-02: order by DEADLINE (make required-soonest first) so day-1 kit is built before later-day kit
+resync_chain_mode: false   # v6 default
+
+# ================================================================================
+# CTP DEVIATION #39 (T1) -- `mhe_index` IN THE DISPATCH KEY.       DEFAULT v6.
+# ================================================================================
+# Slot 2 of the topological dispatch key, ABOVE first_need (slot 3).
+# Its stated purpose is ANTI-MONOPOLY across SUB-DRUMS of one lot. There are no
+# sub-drums on CTP: MEASURED mhe_total == 1 on 8,070 of 8,070 lots. phase2 still
+# writes mhe_index as a within-item SEQUENCE number, 0..13, non-zero on 787 lots.
+# So slot 2 currently orders lots by "how many earlier lots of my own item exist"
+# ABOVE the hour they are needed: 204,845 inverted ordered pairs, 5,183 of 8,070
+# lots (64.2%) dispatch ahead of an earlier-needed lot, and 117 of 911 GT lots have
+# a binding component at mhe_index >= 1.
+#   v6      slot 2, as shipped (DEFAULT -- provably byte-identical to the old key)
+#   off     dropped entirely
+#   demote  moved BELOW first_need (keeps its interleaving, loses its veto on dates)
+dispatch_mhe_index: demote   # 2026-08-02: demote mhe_index BELOW first_need (CTP #39) so components dispatch by NEED, not within-item sequence
+
+# ================================================================================
+# CTP DEVIATION #38 (J1/J2/J3) -- DISPATCH TIE-BREAK ONLY.        DEFAULT OFF.
+# ================================================================================
+# Reorders ONLY lots that are ALREADY TIED on (wave_first, mhe_index, first_need).
+# Slot 4 of the dispatch key, behind all three v6 keys, ahead of item_code. Nothing
+# that DIFFERS on first_need can move. Full write-up + all measurements at
+# phase5_forward_placement_v2.py:1180.  Mutually exclusive with dispatch_priority
+# (non-item_code) and with drum_priority's dispatch leg -- phase5 aborts loudly.
+#
+# WHY: 7,892 of 8,070 lots (97.8%) sit in a multi-lot tie group, largest 350. On the
+# tread extruder 266 lots have 35 distinct first_need; 26 share 2026-06-01 07:00 and
+# the ALPHABET orders them, putting TRD 2256 ROYL 19th because "2256" > "1402" as
+# TEXT. It gates press 4836 (the critical press). All the work ahead of it is in the
+# SAME tie group -- 27.88 h reorderable, 0.00 h frozen (_tie_exp/headroom.py).
+#
+#   off        v6, bit-for-bit. The alphabet.
+#   last_need  J1 as literally specified (phase2 last_need, the CTP #32 rope signal).
+#              MEASURED A NO-OP ON THE TRACED LOTS: 3 distinct values in the cold
+#              group, 24 of 26 tread lots share the latest, TRD 2256 ROYL 202 -> 202.
+#   seed       J3, surgical: the 25 component codes of the first kits of the 26
+#              presses finishing within 1.0 d of critical go first inside their tie
+#              group. scope=cold moves exactly 26 lots inside one 212-lot group.
+#   press_end  minus the observed end of the LATEST press the lot feeds, from a
+#              PREVIOUS run's snapshot. Strongest key measured (splits 250/273 groups,
+#              traced lots to rank 2-14 of 210). !! scope=all is ARITHMETICALLY the
+#              same as CTP #37's REJECTED FB_disp (34.280 d). Only scope=cold is new.
+tie_break:              off        # off | last_need | seed | press_end
+tie_break_scope:        cold       # cold (earliest first_need group only) | all
+tie_break_seed_file:    _wip_audit/CRITICAL_PRESS_SEED_LIST.csv
+tie_break_feedback_dir: _tie_exp/outputs2_BASELINE   # snapshot dir, NEVER live outputs2
+
+# ================================================================================
+# CTP DEVIATION #30 -- MPQ OVER-PRODUCTION DOES NOT CASCADE DOWN THE BOM
+# ================================================================================
+# FOUND BY THE USER, BY EYE, from two totals in the floor schedule -- after the pipeline
+# printed "all_invariants_hold: YES". Every automated gate passed.
+#
+# THE DEFECT: phase1b explodes the BOM from DEMAND. phase2 then applies the MPQ floor PER
+# ITEM, INDEPENDENTLY (`lot_qty_full = max(raw_qty, mpq_min)`), with NO feedback to children.
+# Both sides are locally correct. They never talk. So a parent rounded up to its MPQ floor
+# creates demand its children were never told about.
+#   MEASURED (shipped 35.85 d baseline): 53 items short, 124,485 units uncovered.
+#     Bead Bundle      73,023 (25 items)   <- "you cannot apex a bead you never wound"
+#     CALANDARED ROLL  34,185 ( 5 items)   <- from Ply
+#     FINAL COMPOUND   16,402 (18 items)
+#   Bead chain: apex MADE 828,526 (+10.3% MPQ round-up; 40.3% of buckets AT the 400 floor)
+#   vs bundles MADE 732,861 + usable WIP 21,641 = 754,502.  74,024 apexes have NO BEAD.
+#   ROOT: SUB_WAVE_BUCKET_H_SHORT = 12.0 (phase2). Apex max_aging 24h < 48h threshold -> 12h
+#   sub-buckets -> median raw 512, 40.3% below the 400 floor. Bundle max_aging 48h is NOT
+#   < 48h -> no sub-bucketing -> median raw 2,913, only 6.7% below floor. 400 pieces is ~14h
+#   of apex demand -- LARGER than the 12h bucket it must fit in. THAT asymmetry is the defect.
+#   Do NOT just widen the bucket: apex dies in 24h, so a wider bucket trades over-production
+#   for expiry 1-for-1.
+#
+# mpq_balance_gate: the balance REPORT always runs (writes phase2_bom_shortfall.csv).
+#   true = STOP the run on any uncovered child. Turn on once you have seen a clean run.
+mpq_balance_gate:        false
+# mpq_cascade_to_children: true = derive child demand from parent MADE, not parent DEMAND,
+#   iterated to a fixpoint. PROVABLY CANNOT EXPLODE (max(raw,mpq) is monotone + 1-Lipschitz
+#   on an acyclic BOM: 495/495 items, 0 cycles) and is SELF-DAMPING (cascaded demand pushes
+#   buckets ABOVE their floors, so total MPQ surplus FALLS 169,334 -> 167,598 even as
+#   production rises +132,128 = +0.46%). Converges in 2 passes, measured.
+#   COST: +62.3 h of 12,103 h. Bead Bundle +75,860 (+42.9 h on 1201, a SINGLE winder:
+#   62.2% -> 68.2% true util, 238.6 h idle within its used days); CALANDARED ROLL +37,781
+#   (+15.6 h). BUILDING -- THE CONSTRAINT -- GETS +0.00 h (Green Tyres has NO MPQ and is the
+#   parent of every inflating item, so nothing cascades into it). 0 new lots => 0 new
+#   changeovers. THE PLAN GETS LONGER. That is the correct answer -- the material is not there.
+#
+# ANSWERED 2026-07-17, USER-DIRECTED -- THE QUESTION THAT DECIDED THIS FIX:
+#   Q: "Bead apex minimum run is 400 Nos. If only 250 are needed, does the machine PHYSICALLY
+#       PRODUCE 400 apexes (consuming 400 bundles), or produce 250 and just HOLD THE LINE for
+#       the minimum run time?"
+#   A: "PRODUCE 400 apexes. It should follow the MPQ file."   <-- MPQ IS PIECES, NOT TIME.
+# So a floored apex run really does consume 400 bead bundles, the material balance is real,
+# and the cascade is the CORRECT fix. (Had the answer been TIME, this would be VOID: lot_qty
+# would stay 250, only duration_min would reflect the floor, and the shortfall would vanish
+# with zero extra winding.) => TURNED ON.
+#
+# !! WHAT REMAINS UNRESOLVED, AND IT IS A REAL COST -- DO NOT LET THIS BE FORGOTTEN:
+# !! Bead Apex MaxAging is 24 h (cut 72 -> 24 by the UNSIGNED 2026-07-16 23:23 upload). So the
+# !! ~77,596 surplus apexes CANNOT go to stock -- this cascade now winds ~73,023 REAL bead
+# !! bundles to make apexes that EXPIRE BEFORE USE. Apex already carries 1,695 expiry
+# !! violations (2nd worst item type in the plant, 66.6% of its lots). That is now CORRECT and
+# !! DELIBERATELY WASTEFUL: the plan is executable and it plans scrap.
+# !! THE ROOT IS NOT THE MPQ -- it is SUB_WAVE_BUCKET_H_SHORT = 12.0 (phase2). Apex max_aging
+# !! 24h < the 48h threshold -> 12h sub-buckets -> median raw 512, 40.3% below the 400 floor.
+# !! Bundle max_aging 48h is NOT < 48h -> no sub-bucketing -> median raw 2,913, 6.7% below.
+# !! 400 pieces is ~14h of apex demand -- LARGER than the 12h bucket it must fit in.
+# !! Widening the bucket is NOT free: apex dies in 24h, so it trades over-production for
+# !! expiry 1-for-1. THE REAL FIX IS TO CONFIRM OR REJECT THE 24h WITH THE PLANT.
+# USER-DIRECTED 2026-07-23: REVERT CTP #30 TO v6. v6 has NO MPQ cascade and NO material
+# balance (both features are entirely absent from v6_wave_p2/phases/phase2_lot_sizing.py).
+# Set to false so phase2 lots are v6 BIT-FOR-BIT (the code's own designed off-switch).
+# ACCEPTED COST (same class as the phase1c v6-revert): reintroduces the material imbalance
+# this fix closed -- ~124,485 units across 53 items where a parent is rounded UP to its MPQ
+# floor but its children are NOT built to match (phantom production). ZERO makespan change.
+# To restore the fix, set both flags below back to true.
+mpq_cascade_to_children: false           # v2: OFF under building-echo (per-shift blocks -> cascade explodes compound 80x)
+mpq_material_balance_report: true       # #30 material-balance report OFF = v6 (v6 has no such check)
+mpq_cascade_max_passes:  40   # inert while cascade is off (kept for easy restore)
+
+# ================================================================================
+# CTP #33 / #34 / #35 -- THE MATERIAL-GATE FLOW FIXES (F1 / F3 / F2)
+# ================================================================================
+# BACKUPS + REVERT PATH (2026-07-24):
+#   _flow_exp/phase3_dag_construction.py.BASELINE   -> ctp_v6_v2/phases/
+#   _flow_exp/phase5_forward_placement_v2.py.BASELINE -> ctp_v6_v2/phases/
+#   _flow_exp/config.yaml.BASELINE                  -> ctp_v6_v2/config.yaml
+#   _flow_exp/inventory.csv.BASELINE                -> ctp_v6_v2/inputs/inventory.csv
+#   1-line revert: set the three flags below to false (VERIFIED bit-identical to the
+#   CTP #32 shipped run: 33.349 d / 46.48 % >24 h / 18.58 % >48 h / 21.27 h median /
+#   cured 385,772 / kit 7018-193-62).
+#
+# MEASURED 2026-07-24, matched A/B, every cell run `--from phase1c`, all-OFF re-verified
+# BIT-IDENTICAL (md5 of phase3/4/5/6 outputs) BEFORE and AFTER every edit:
+#
+#   variant           makespan  >24h    >48h    med    1st GT  bld CO  compFEFO(ex-cap)
+#   A0 baseline (#32)  33.349 d 46.48%  18.58%  21.27h  37.68h   371     94.25% (59.33%)
+#   B1 F1              33.315   44.83   18.39   20.06   11.68    370     92.87  (57.18)
+#   C1 F1+F2("lot")    34.261   32.12   13.20   11.27   14.66    763     94.63  (66.62)
+#   C2 F1+F2("family") 34.271   51.29   22.12   25.41   14.66    361     92.81  (53.91)
+#   D1 F1+F2+F3        34.261   31.34   12.42   10.56    5.56    763     94.40  (65.75)
+#   E1 F1+F2+F3+F4     34.261   30.60   12.05   10.31    2.73    763     93.42  (65.26)
+#   D2 F1+F3           33.315   43.30   17.02   19.75   11.14    370     92.85  (56.84)
+#   E2 F1+F3+F4        33.315   43.22   16.93   19.52   11.14    370     91.97  (56.74)
+#   cured = 385,772 and kit 7018/193/62 in EVERY cell. Building work 6,312.6 h everywhere.
+#
+# ---- CTP #33 (F1) -- PER-EDGE CONSUMPTION QUANTITY.  *** ON. ***  ---------------
+# phase3's edge carries no quantity, so phase5's material gate can only form `need` as
+# the SUM of the consumer's BOUND PREDECESSOR LOT QUANTITIES. MEASURED on the shipped
+# run that is 787,917,887 units against a TRUE BOM consumption of 27,415,139 -- 28.7x.
+# Arithmetically it makes the gate identical to "wait for EVERY predecessor lot".
+# ON: phase3 emits `consume_qty` (FEFO allocation of the TRUE per-parent-unit rate taken
+# from phase1_demand_updated.csv.gz) and phase5 uses need = SUM(consume_qty). The edge
+# SET is UNCHANGED -- VERIFIED: phase4_lot_times md5 IDENTICAL, so every LFT, degree and
+# depth is bit-identical; only the material gate's arithmetic changes.
+# MEASURED ALONE: -0.034 d, GT over-24h -1.65 pp, over-48h -0.19 pp, median -1.21 h,
+#   component FEFO -1.38 pp, first green tyre 37.68 -> 11.68 h, cured/kit UNCHANGED,
+#   ALLOCATED negative-gap edges 0 (all 130 negative gaps sit on consume_qty=0
+#   compatibility links), MATERIAL STARVATION 0. It improves every axis.
+edge_consume_qty:            true
+#
+# ---- CTP #35 (F2) -- ORDER THE BUILDING QUEUE BY NEED, NOT BY NAME. *** REJECTED ***
+# The per-machine layout key is (due_day, ITEM CODE, due, lot_id): inside a due-day
+# bucket a STRING decides the priority. Two modes were built and BOTH ARE REJECTED:
+#   "lot"    (the literal fix, (due_day, last_need, due, code, lot_id)) --
+#            GT over-24h 44.83 -> 32.12 % (much better) BUT component FEFO ex-cap-strip
+#            57.18 -> 66.62 % (WORSE), makespan 33.315 -> 34.261 d, building changeovers
+#            370 -> 763 (+393, ~+262 h). `code` was ALSO the campaign key.
+#   "family" (order the CODES by their earliest last_need, keep each code as one
+#            campaign) -- changeovers 370 -> 361 (BETTER) and component FEFO ex-cap
+#            57.18 -> 53.91 % (BETTER) BUT GT over-24h 44.83 -> 51.29 % (WORSE) and
+#            makespan 34.271 d.
+# Both RAISE an aging axis and both cost ~0.95 d => REJECTED under the standing rule.
+# What they show is that GT age and COMPONENT age are a CONSERVED PAIR here:
+# re-ordering building MOVES rot between them, it does not remove it.
+# Accepts false / "lot" / "family".
+building_order_by_need:      false
+#
+# ---- CTP #34 (F3) -- SEED OPENING COMPONENT WIP INTO THE phase5 GATE. *** ON. ***
+# _material_ready_ns counts only predecessors `in schedule` (produced THIS month).
+# Opening component stock -- which phase1c has ALREADY netted out of the demand, so it
+# is never produced -- was invisible. This is the component analogue of phase6's
+# seed_kitpool_from_inventory (green tyres, live since 2026-07-16).
+# !! REQUIRES edge_consume_qty. phase5 REFUSES to seed against the v6 lot-sum need and
+#    says so, because that WOULD be a double count.
+# THE NO-DOUBLE-COUNT PROOF, printed every run and reproduced here (2026-07-24):
+#    true need 27,415,139 | production 27,341,528 | opening 1,554,707
+#    items covered 350/427 | REAL SHORTAGE 647,578 units over 77 items (2.4% of need;
+#    those items keep the old strict-precedence behaviour and are listed by name).
+#    Per item the identity is  need == production + opening  -- e.g.
+#    TRD 1513 XPC1 MSIL: need 92,247.3 = produced 91,104.0 + opening 1,143.0.
+# MEASURED (on top of F1): GT over-24h 44.83 -> 43.30 %, over-48h 18.39 -> 17.02 %,
+#   median 20.06 -> 19.75 h, component FEFO 92.87 -> 92.85 % (ex-cap 57.18 -> 56.84),
+#   makespan unchanged, cured/kit unchanged, MATERIAL STARVATION 0.
+# NOTE: F3 credits the plant's stock the SAME way phase1c already did -- against ALL of
+# it, with no expiry filter (phase1c reverted #25 to v6 on 2026-07-22). If phase1c ever
+# starts age-filtering the WIP, this must follow it or the two will disagree.
+seed_component_wip_phase5:   true
+
+# ---- F4 -- CAP STRIP + MOTHER ROLL ASSUMED AVAILABLE. *** NOT APPLIED. ***  -----
+# USER DIRECTIVE 2026-07-24: the plant holds cap strip and capstrip mother roll and will
+# supply the quantity later; until then treat them as available. F4 is NOT a config flag
+# -- it is an EDIT TO A PLANT MASTER (inputs/inventory.csv), so it is left OFF and must
+# be applied as an explicit, visible act:
+#     python _capstrip_exp/seed_capstrip.py --hours 24     (24 h = cap strip shelf life)
+#     python ctp_v6_v2/run_pipeline.py --from phase1c
+#     python _capstrip_exp/seed_capstrip.py --hours 0      (restore)
+# IT IS AN ASSUMPTION, NOT MEASURED DATA -- the plant has not given a number. Seeded qty
+# at 24 h: CAP 66 - CAPSTRIP 477,420 M and CAP 66-MOTHERROLL 3,091 M (the file itself
+# carries only 3,005 M of cap strip).
+# MEASURED on top of F1+F3: makespan 33.315 d UNCHANGED, GT over-24h 43.30 -> 43.22 %,
+#   over-48h 17.02 -> 16.93 %, median 19.75 -> 19.52 h, first green tyre 11.14 h
+#   UNCHANGED, component FEFO 92.85 -> 91.97 %. It buys almost nothing once F1 is on,
+#   because cap strip is no longer the gate. It is only worth ~9 h of first-build
+#   (5.56 -> 2.73 h) in the F2 variants, which are themselves rejected.
+
+# ==============================================================================
+# 2026-09-26 SEPTEMBER LIVE-WIP FIXES (see SEP2026_ISSUES_FIXES.md)
+# ==============================================================================
+# FIX #3 shared green tyre: phase2 pools one GT across every SKU that uses it. Key the
+# building-echo kit gate (phase5) and the curing kit pool (phase6) by GT CODE instead of
+# skus_set[0], so SKU B of a shared GT is built and cured from real kit.
+echo_kit_by_gt:               true
+kitpool_key_by_gt:            true
+# FIX #6 expired WIP: phase1c nets only stock still alive at plan start (phase5/phase6
+# already refuse expired stock; netting against it under-built the plan).
+phase1c_exclude_expired_wip:  true
+
+# ==============================================================================
+# 2026-09-27 RCA FIXES C1/C2/C4 (see SEP2026_ISSUES_FIXES.md section 6)
+# ==============================================================================
+# C1: phase1c = time-phased level-by-level MRP (own-stock FEFO netting, net passed down per
+#     route & block; green tyres NOT netted when the building plan is echoed). Zero-stock parity
+#     gate vs phase1b every run; falls back to the v6 cascade if it fails.
+phase1c_time_phased_mrp:      true
+# C2 + C4: building-echo kit gate = physical per-item material ledger (+ ledger replay proof,
+#     outputs2/phase5_material_ledger.csv). Re-cut verification uses the same ledger.
+echo_kit_ledger:              true
+# 2026-09-27 USER: green-tyre shelf life is 72 h for ALL green tyres (CTP_Master_Aging had 0 h on
+# 26 GT codes -> fell back to 24 h -> 197 opening green tyres wrongly treated as expired on day 1).
+# Applied to config (above) AND to every GT row of the aging master by build_sep_inputs.py.
+green_tyre_shelf_life_all_h:  72
+green_tyre_scrap_expired: true   # v19 (2026-10-05): a green tyre past green_tyre_max_age_h (72 h) when a press could take it is SCRAP, never cured (BRG-02). false = v18 (age reported only)
+# ==============================================================================
+# 2026-09-27 BUSINESS RULES (businees_rules/*.xlsx) -- see SEP2026_ISSUES_FIXES.md section 7
+# ==============================================================================
+# ==== 4RC (FOUR ROLL CALENDAR, machine 901) RULES (2026-10-06, user) ===================================
+# See latest_schedule/BUSINESS_RULES_LOG.md (v21). Every switch false = v20 behaviour.
+fourrc_rules:
+  machine: "901"
+  matrix_line: "4 RC Calendar"            # JK_CTP_PPDS.CTP_Master_ChangeoverMatrix.machine for 901
+  bypass_cap66_slitted: true              # rule 2: CAP 66-MOTHERROLL made from fabric + B616M directly; no 'CAP 66- slitted material' lots
+  routing_speed_only: true                # rule 4: 901 run time = metres / (routing proc_time x efficiency); no linespeed_rolls on 901
+  creel:                                  # rule 5: one creel; 240-min reload after the last steel lot of the old cord, in parallel
+    enabled: true
+    setup_min: 240
+    units: 1
+    pull_early_h: 8                       # a fabric lot may be pulled at most 8 h earlier to fill a creel window (inputs ready)
+  capacity_check: true                    # rule 3: steel / fabric minutes per plant day vs 1440 (report)
+  day_plan:                          # v34 (user): 4RC rules 1-3 -- item in ONE GO per plant day; same wire / dip
+    enabled: true    # v38 (user): 4RC rules 1-3 back ON and applied completely
+    mandatory: true  # v38: every plant day takes the one-go / wire-block / least-changeover order (not only when nothing is later)
+    tolerance_m: 1.0 # v38: a lot within 1 m of a spool length is one spool (3000.01 m = one 3000 m spool)
+    pull_h: 8                        # consumed before the change (last lot of the wire lengthened, extra to stock)
+    need_order: true                 # v98 (user 2026-10-13): each day's wire blocks / items ordered by need time (first consumer -
+                                     # min aging), loaded wire first, fabric still fills creel reloads; false = v97 (start order, cheapest matrix)
+    whole_spool_topup: false         # v76 (user 2026-10-11): 4RC makes the DEMANDED metres only (as the plant: cord changed at 2.34
+                                     # spools); true = v59-v75 whole-spool / dip top-up (rule 4RC-8, ~146 km extra roll + its compound)
+  pool_span_h: {fabric: 24, steel: 48}   # v98 (user 2026-10-13): a 4RC lot pools at most this many hours of demand (<= one dip,
+                                     # min roll kept) so one roll does not serve consumers days apart; {} = v97 (shelf window ~70 h)
+  creel_source: frc_wire_type        # v42 (user): same CTP_Master_FRC wire_type = same creel load (no reload); steel items on
+                                     # different wire_type = 240 min reload; changeover type / minutes from CTP_Master_ChangeoverMatrix
+  wire_campaign:                     # v42 (user): items sharing a wire run together as ONE load, whole Spool/Dip Length,
+    enabled: true                    # cheapest matrix order inside; a load may take the next max_days days' lots of its wire
+    max_days: 2                      # v98 (user 2026-10-13): 5 -> 2 (a load pulls fewer future-day lots; v97 = 5). v59: 3 -> 5; when inputs are ready and every metre is used within max aging (CTP_Master_Aging) - safety_h
+    no_join_first_day: []           # v93 TESTED ON again (day 1 fixed, total -2,004), not kept. v90 TESTED ["^CAP 66-MOTHERROLL$"] (day 1 fixed, total -1,746), not kept; v90 (user 2026-10-13): first plant day's CAP 66 load takes no next-day lots (keeps the
+                                     # first dip short so the 4RC-10 hold cannot delay cap strip to day 2); [] = v87
+    safety_h: 4
+    bridge_days: 1                   # back to v65 (v68 test: 2) (fabric dip load for a creel reload from up to 2 plant days ahead, within shelf life)                   # a creel-reload window may take the next plant day's fabric dip load (within shelf life)
+  level_plan:                        # v44 (user): plan 901 FIRST at min_km..max_km per plant day (peaks earlier, light days pull the
+    enabled: false                   # next days, within max aging - safety_h), then back-schedule the feeding compounds to it
+    mode: average                    # v44 option C (user): band = average daily 901 need (whole spools / dips) +- band_km
+    band_km: 5
+    min_km: 30                       # used only in mode: band
+    max_km: 35
+    max_days: 3
+    safety_h: 4
+  load_compact:                      # v60 (user 2026-10-09): no idle inside a dip / spool load on 901 -- (1) next lot of the
+    enabled: true                    # load pulled right behind the previous one (inputs ready, max aging - safety_h, one go a
+    safety_h: 4                      # day, PM); (2) a gap left inside a load takes a whole fabric dip load from later only when
+    fill_pull_days: 2                # v84 TESTED 3, not kept. the two parts are on different plant days (part 2 may start at the next 07:00 if no
+    min_gap_min: 30                  # consumer is delayed)
+  spool_netting:                     # v59 (user 2026-10-09): the whole-spool / dip top-up is stock for the same item's later
+    enabled: true                    # lots (min aging before, max aging - safety_h at every consumer); covered lots cut (>= min
+    safety_h: 4                      # roll) or dropped, consumers re-linked; one go a day / whole spools / creel kept
+    max_changes: 400
+  creel_fill:                        # v58 (user 2026-10-09): idle creel-reload windows on 901 get a WHOLE fabric dip load
+    enabled: true                    # that bridges no other cord change (that plant day or <= pull_days later); next steel
+    pull_days: 2                     # v84 TESTED 3: no fill found (no fabric demand to pull). lot never delayed; one go a day, inputs ready, shelf life kept; then the 901 lots
+    min_window_min: 30               # behind move earlier into the freed time (compact; never later, same order)
+    compact: true
+    compact_always: true             # v69 #1: pull 901 lots earlier (same order) every 4RC round, not only after a fill
+  left_shift:                        # v97 (user 2026-10-13): whole wire loads on 901 moved EARLIER into idle after the last
+    enabled: true                    # 4RC pass (order, creel 240 min, matrix changeovers, PM, inputs + min aging, max aging -
+    safety_h: 4                      # safety_h at consumers, one go a day all kept; never later). false = v87
+    min_gain_min: 10                 # move only when the load starts at least this much earlier
+    rounds: 2                        # left-shift + final repair rounds
+    repeg: true                      # v98: 901 output re-allocated FEFO within shelf life before the shift (over-age qty never rises); false = v97
+  urgent_pull:                       # v88 (user 2026-10-13): a 901 lot its consumer WAITS for (consumer starts within slack_h of
+    enabled: false                   # v89 TESTED fabric-only after day plan: +914 (noise), 4RC-10 96 %, PCR 12/13-Oct lost -> not kept. v88 TESTED (steel too, inside the 4RC rounds: -411, PCR 12/13-Oct lost), not kept. The lot being ready) moves into an idle gap >= min_gap_min: inputs ready, shelf life,
+    min_gap_min: 60                  # changeovers, PM, creel (fabric or the loaded wire) and the next lot kept; one go a day
+    slack_h: 1.0                     # may be broken for these urgent lots only. false = v87
+    fabric_only: true                # v89: fabric lots only (no steel -> no creel change, day plan not re-sequenced)
+    after_day_plan: true             # v89: run ONCE after the last 4RC day-plan / one-go pass (later passes cannot reorder the day)
+  replan_after_repair: false         # v49: OFF again (v48: reordered whole spools, steel late -> cutters stalled); v48 (user 2026-10-08): ON without the level band -- 901 runs whatever is READY (same item, same FRC wire, fabric in a creel reload, earliest need), never waits behind a lot whose compound is missing; v45 (user): 901 re-planned after the final repair on real input-ready times (no queue blocking)
+  deep_roll:                         # v44 (user): dipped-fabric items in FULL dips -- 48 h need >= one dip -> floor(need / dip) dips;
+    enabled: false                   # < one dip -> extend to 72 h and decide again (at least one dip, never a partial dip);
+    horizon_h: 48                    # dip length = CTP_Master_FRC Spool/Dip Length (2,000 m for most dips)
+    extend_h: 72                     # used only with mode 48_72 (v44/v45)
+    mode: max_aging                  # v46 (user): dips = floor(max(48 h need, need inside the item's max aging (CTP_Master_Aging)) / dip), at least 1
+    classes: ["fabric"]
+  level_loading:                     # v43 (user): 30-35 km of 901 output every plant day -- a light day pulls the next days' lots
+    enabled: false                   # v44: replaced by level_plan (planned first); the after-the-fact pull found nothing ready                    # (inputs ready, within max aging - safety), never above max_km; work only moves earlier
+    min_km: 30
+    max_km: 35
+    max_days: 3
+  roll_lengths:                      # v27 (2026-10-06): JK_CTP_PPDS.CTP_Master_FRC spool / dip length = largest run,
+    enabled: true                    # made at once; demand pooled up to it within shelf life (fewest runs / changeovers);
+                                     # min roll = spool_length (300) = MPQ; residual < min is made now (no infeasible roll)
+  aliases: {MONOCHAFER: MONOCHAFFER}      # scheduler code -> matrix code (after removing spaces / hyphens / MOTHERROLL)
+  class_override: {CWBP60: steel}         # ASSUMED: the matrix lists CWBP60 only under 'Dual groove roll set up' (no steel/fabric type)
+
+business_rules:
+  rule_repair_pass: true            # phase5 per-machine compliance pass (GEN-07, BR4RC-05, BRM-03/05/06/09, BRE-02, BRC-01/02, CUT-08)
+  pull_early_h: 8                   # a lot may be pulled at most 8 h earlier to keep same-item runs together
+  mixers: ["K270M", "F270", "F440", "K310", "K430-1", "K430-2", "270M", "440M", "310", "430-1", "430-2"]
+  cap66_cleanout_min: 15            # BR4RC-05 (matrix said 10)
+  butyl_compounds: ["ML405", "ML605", "29MG"]        # BRM-03
+  butyl_friendly: ["MB100", "MB200", "XMB98"]        # BRM-03
+  compound_followers: {ML405: "MK3", ML406: "MK3"}   # BRM-05
+  master_final_cleanout_item: "TR100"                # BRM-06
+  master_final_cleanout_min: 5      # ASSUMED: TR100 not in routing -> ~1 batch + 2 min changeover
+  same_item_shift_merge:            # v18 (2026-10-05) BRM-09: join a compound's split runs inside one shift (local moves, all limits kept)
+    enabled: true                   # false = v17 behaviour
+    machines: []                    # v36 (user): mixers only, as v18-v31 (v32 BR-9 had ALL)
+    exclude: ["901"]                # 4RC: creel / spool-run order is kept by its own rules
+    max_consumer_delay_h: 8         # a join may start a consumer up to 8 h later (0 = never delay a consumer)
+    post_repair_relaxed_h: 8        # v38 (user: mixing rules applied completely): after the strict rounds, remaining splits joined with a consumer delay <= 8 h, then the repair re-times the later lots
+    repair_units: true              # final repair: lots in current time order; same-item runs + IL campaigns move as blocks (keeps BRM-09 / 3.1.3)
+  sticky_compounds: ["JT444", "JT466"]               # BRM-02
+  sticky_stack_batches: 3
+  buffer_batches: 5                 # v11 (2026-10-01): plant rule BRM-13 applied (+5 batches per compound; v5-v10 ran with 0). BRM-13 (+5 batches per compound, not special compounds)
+  special_compounds: ["ML405", "ML605", "29MG"]      # + sticky compounds (excluded from BRM-13)
+  # BR-V1 (2026-10-01, latest_schedule/BUSINESS_RULES_LOG.md): mixing output is planned in BATCHES.
+  # BATCH -> phase2 rounds every MASTER/FINAL COMPOUND lot UP to whole batches and phase5 splits
+  # each mixing lot into shift rows of WHOLE batches (columns `batches`, `batch_size_kg` on the
+  # floor schedule; kg = batches x batch_size_kg). KG -> the previous kg planning, unchanged.
+  mixing_output_uom: BATCH
+  mixing_batch_source: ctp_inputfiles/routing_live.csv   # v87 (user 2026-10-13): JK_CTP_PPDS.CTP_Master_Routing (live), NOT CTP_Master_mixing
+  # v85-v86: ctp_inputfiles/mixing_master_live.csv (JK_CTP_PPDS.CTP_Master_mixing, written live by build_sep_inputs.py)
+  # v1-v84: INPUT_TABLES_30SEP_TRUE/01_DB_tables/JK_CTP_PPDS__CTP_Master_Routing.csv (a 30-Sep file copy)
+  # BR-V2 (2026-10-01, latest_schedule/BUSINESS_RULES_LOG.md, butyl_rule.py): butyl-friendly sequencing.
+  # A transition that breaks the sequence gets a 120 s CLEAN-OUT INSTEAD OF the mixer changeover (user 2026-10-06).
+  # Enabled -> REPLACES the old BRM-03 purge (butyl_compounds / butyl_friendly above are then unused).
+  butyl_sequence_rule:
+    enabled: true
+    cleanout_sec: 120                # 2026-10-06 user: butyl clean-out is 120 s -- keep for all runs (was 160)
+    cleanout_basis: fixed            # 2026-10-06 user: fixed 120 s (was one_batch_cycle = one batch of the compound, BR-V10)
+    targets_count_as_prep: false     # back to v65 (v67 test: true); v67 (user 2026-10-10): butyl -> butyl needs no clean-out (was false: ML405 -> ML605 also needed it)
+    final:                           # final mixers
+      targets: ["30G", "IL3", "IL5"]
+      prep:    ["B1", "B2", "B99"]   # B1, B2: NOT in routing/BOM -> can never be scheduled (see log)
+      family:  ["IL3", "IL5"]        # BR-V10 (user 2026-10-01): IL3 <-> IL5 run together -> plain compound changeover, no clean-out
+      check:   [before]
+      cleanout_basis: fixed          # BR-V13 (user 2026-10-01): broken final sequence -> 120 s clean-out
+      cleanout_sec:   120
+    master:                          # master mixers
+      targets: ["29MG", "ML405", "ML605"]
+      prep:    ["MB100", "MB200", "XMB98", "XMB98 Repass"]   # 'XMB98 Repass': no such code in routing/BOM
+      check:   [before, after]
+      cleanout_basis: none           # BR-V13 (user 2026-10-01): broken master sequence -> NO clean-out, only the 60 s changeover
+# ==============================================================================
+# 2026-09-27 RCA #2 FIXES (day-27 TBR delay) -- see SEP2026_ISSUES_FIXES.md section 8
+# ==============================================================================
+edge_alloc_fix:               true    # phase3: per-edge BOM rate + residual to NEXT producer lot in time
+priority_protect:                     # phase5: non-urgent compound may not take early mixer capacity
+  enabled: false   # 2026-09-27 MEASURED WORSE (built 83.9->81.4%): mixers are short all week, holding non-urgent compound back only idles them early
+  itypes: ["MASTER COMPOUND", "FINAL COMPOUND"]
+  buffer_h: 24                        # target start >= latest start - 24 h
+# 2026-09-27: phase6 cure block = real press time (plant formula Qty/2 x (cure + allowance)), capped at the plan window
+# ═══ V23 CAPACITY RULES (2026-10-06, user; BUSINESS_RULES_LOG.md) ═══════════════════════════════
+# building: build time = qty x routing GT BUILDING proc_time / efficiency; every GT change on a TBM is
+#   charged the changeover matrix DIFFERENT-SIZE time (TBR Building 'Size Change' 24, PCR Building BJ
+#   'Inch to Inch' 60 -- the larger PCR line, since the masters do not say which TBM is BJ / CONTI).
+# curing: q_shift = tyres one press cures in a shift = floor(cavities x shift_min / (routing cure +
+#   allowance)); a plan block never exceeds q_shift and holds the press qty x shift_min / q_shift min.
+capacity_rules_v23:
+  building:
+    enabled: true
+    use_routing_efficiency: true
+    pcr_line: "PCR Building BJ"
+    tbr_line: "TBR Building"
+  curing:
+    enabled: true
+    shift_min: 480
+
+# ═══ QUINTOPLEX PCR TREAD RULES (2026-10-06, user; BUSINESS_RULES_LOG.md v24) ═══════════════════════
+# BR-18 eligibility (routing machines) / BR-19 line speed (routing M/MIN x eff) / BR-20 matrix A-H were
+# already followed; BR-21: per plant day run the tread lots in the order with the least matrix changeover
+# (same die first, then same compound family), only inside each lot's coverage window (phase5 pass).
+quintoplex_rules:
+  enabled: true
+  machine: "1002"
+  matrix_line: "Quintoplex PCR Tread"
+  cushion_compounds: ["B715", "B815"]
+  look_ahead: true          # join a next-day lot of the SAME die to today's run when its window allows
+  max_delay_h: 24           # v25 (was 12); a lot may finish at most this much later than placed (and before its first build)
+  max_pull_h: 24            # v25 (was 12); a lot may start at most this much earlier than placed
+
+# ═══ DUPLEX TBR TREAD RULES (2026-10-06, user) ═══════════════════════════════════════════════════════
+# BR-22 eligibility / BR-23 line speed / BR-24 matrix (die 4.76, die+preformer 4.92, compound 12.5 / 14)
+# were already followed. BR-25: per plant day run the treads of one compound FAMILY at a stretch (BOM:
+# T636 treads together, T639 treads together), then the least matrix changeover -- same pass as BR-21.
+# Tread<->apex (29.01 min) does not apply: the routing puts no apex on 1801 and the matrix has no such class.
+duplex_rules:
+  enabled: true
+  rule: "BR-25"
+  label: "Duplex"
+  machine: "1801"
+  matrix_line: "Duplex TBR Tread"
+  family_compounds: ["T636", "T639"]
+  family_first: true
+  look_ahead: true
+  max_delay_h: 12
+  max_pull_h: 12
+
+# ═══ TRIPLEX PCR SIDEWALL RULES (2026-10-06, user; v30) ═══════════════════════════════════════════════
+# BR-26 eligibility (routing machines) / BR-27 line speed (routing M/MIN x eff) / BR-28 matrix (A die+preformer 3 min,
+# B compound + barrel pushout + flow channel 28 min) were already followed. BR-28 "minimise repeated compound changes":
+# per plant day each compound FAMILY (the sidewall's full BOM compound set, e.g. JT444+R158) runs at a stretch,
+# then the least matrix changeover -- same pass as BR-21 / BR-25.
+triplex_rules:
+  enabled: true
+  rule: "BR-28"
+  label: "Triplex"
+  machine: "1001"
+  matrix_line: "Triplex PCR SW"
+  family_mode: bom_set
+  family_first: true
+  look_ahead: true
+  max_delay_h: 12
+  max_pull_h: 12
+
+# ═══ QUADRAPLEX TBR SIDEWALL / SHOULDER-PAD RULES (2026-10-06, user; v31) ═══════════════════════════════
+# BR-29 eligibility / BR-30 line speed / BR-31 matrix (A die 2, B die+preformer 3, C SW->SP 36, D SP->SW 34,
+# E SP->SP compound 15 min) were already followed. BR-32: per plant day ALL sidewalls in one block and ALL shoulder
+# pads in one block -> the 34-36 min SW <-> SP changeover at most once a day; the day starts with the group running
+# at the end of the previous day; inside a group the main compound (tie) and least changeover decide.
+quadraplex_rules:
+  enabled: true
+  rule: "BR-32"
+  label: "Quadraplex"
+  machine: "1803"
+  matrix_line: "Quadraplex TBR SW"
+  family_mode: itype
+  family_first: true
+  look_ahead: true
+  max_delay_h: 12
+  max_pull_h: 12
+
+# BR-31: a Quadraplex pair the matrix lacks (264 blank pairs + TSW-024) -> 36 min sidewall <-> shoulder pad, else 15
+changeover_missing_pair_by_type:
+  "Quadraplex TBR SW": {same_type: 15, other_type: 36}
+
+# BR-24: a pair the matrix does not carry is charged this (was the scheduler's generic 15 min);
+# the pairs are listed in DUPLEX_MISSING_MATRIX_PAIRS.xlsx
+changeover_missing_pair_min:
+  "Duplex TBR Tread": 14
+  "Triplex PCR SW": 28                # v30: missing Triplex pair = compound change (safe)
+
+curing_press_time_actual:
+  enabled: true
+  cavities: 2
+  allowance_pcr_min: 2.5
+  allowance_tbr_min: 6.0
+  tbr_sku_prefix: ["11"]
+
+# ═══ V5 CAP STRIP / EDGE GUM GUARANTEE (2026-09-29, user) ═══════════════════════════════════════
+# The plant's V5 planner checks cap strip (B616M -> slitted 2401/2402 -> FRC mother roll -> cap strip
+# 701/702) and edge gum (B1144/B127/B107 -> EG01-03/BP01/TEG-01/02 on 1102 -> edge strip / TB WRAP /
+# STC-WRAP on 601 -> belt, chipper, TBR gum strip) hour by hour and caps its building plan so building
+# never waits for them. These items are still scheduled and aged, but never hold a lot or build block.
+# NOT included: BEF001 (TBR belt edge filler on 1802) -- not part of V5's edge-gum logic.
+kit_gate_assume_available: []      # v77 (user 2026-10-11: fully integrated): building waits for EVERY input; v29-v76 = ["CAPSTRIP", "MOTHERROLL", "CAP ?66- ?slitted", "^EG0[0-9]$", "^BP01$", "^TEG-0[0-9]$", "WRAP", "^EGSL", "^GUM STRIP$"]
+kit_gate_assume_first_h:            # v79 (user 2026-10-12): for build rows PLANNED in the first `hours` of the plan, cap strip,
+  enabled: true                     # edge gum, edge strip and steel belt edge strip are assumed present (not gated, not drawn);
+  hours: 8                          # v85 (user 2026-10-13, plan-12oct/assumption.md #1): 8 h (A shift), was 24 (v79-v84)
+  item_types: ["Cap Strip"]         # v85: Cap Strip + Edge Gum only; Edge Strip / Steel Belt Edge Strip / BEF checked against stock
+  patterns: ["CAPSTRIP", "^EG0[0-9]$", "^EGSL", "^TEG-0[0-9]$"]   # edge gum EG0x / EGSL0x / TEG (item master types them Steel Belt Edge Strip)
+  # codes_file: ctb_untracked_codes.csv   # v85: OFF -- untracked codes / types count as zero on the floor (assumption.md "removed")
+ctb_wip_assumptions:                # v80 (user 2026-10-12): the plan generator's WIP assumptions (CTB_WIP_ASSUMPTIONS_v2.xlsx)
+  enabled: true                     # #11 expired opening stock usable expired_usable_h from t0; #2 flow_hours of measured
+  file: CTB_WIP_ASSUMPTIONS_v2.xlsx # upstream flow (sheet 5) added as stock at t0; #1 untracked building components (sheet 6b)
+  expired_usable_h: 0               # v85: 0 = no expired-stock assumption (assumption.md: only Cap Strip + Edge Gum assumed as stock); was 24
+  flow_hours: 24                    # v85: kept -- assumption.md #8 CTB_FLOW on (rates from sheet 5 of the file above)
+outsourced_items:                   # v97 (user 2026-10-13): procured from outside -> routing rows removed, always available,
+  enabled: true                     # never made (like MTCM313 / TBA827 / TCA313 in apply_ctb_approximations.OUTSOURCED). false = v87
+  items: [CWCH30256, CWBHI34,        # 4RC (901) items bought in (4RCRMS)
+          TBA827, TCA313, MS43, MS70, MB100]   # mixing: bought-in compounds
+masters_unlimited:                  # v87 (user 2026-10-13): master compound inventory assumed ALL available -> MASTER MIXING routing
+  enabled: true                     # DEFAULT = v87 (user 2026-10-13: v87 is the default version). v96 (user 2026-10-13): false = masters mixed for real + plant cycles for masters. v95 TESTED false (115,899). Rows dropped in apply_ctb_approximations.py (like outsourced compounds): masters not mixed, never short
+inventory_item_alias:               # v77 (user 2026-10-11): opening-stock code -> scheduler / BOM code ("<code>|<item_type>")
+  "CAP 66|Cap Strip": "CAP 66 - CAPSTRIP"
+
+# 2026-09-30 true-baseline RCA: mixers make the compounds that feed bottleneck lines FIRST
+# (B1144 -> BEF001 on 1802 sat 45 h idle; tread compounds -> 1002/1801). Targeted, not global.
+protect_bottleneck_feed:
+  enabled: false   # v44: replaced by fourrc_rules.level_plan (only the compounds of each levelled 901 lot are back-scheduled); v43 blanket 24 h cost output
+  items: []        # was ["^BEF001$", "^TRD ", "^TR5"] (tested 2026-09-30, worse); v43 targets 901 only
+  machines: ["901"]
+  lead_h: 24
+
+# ═══ V35 COVER-FIRST DISPATCH CD-1..3 (2026-10-06, user) — every section ═══════════════════════════════════
+# CD-1: cover_h = (stock + aged WIP) / consumption rate; under the threshold = urgent -> lowest cover runs next.
+#   building: threshold building_threshold_h (8 h = one shift; v34 90th-pct restock PCR 5.6 h / TBR 4.6 h + margin);
+#   upstream: urgent when the lot must start now to finish upstream_margin_h before its first consumer (the window
+#   already holds changeover + run time + min aging / transfer from CTP_Master_Aging / routing).
+# CD-2: equal cover -> the SKU / item feeding FEWER moulds (presses in the curing plan) first (user).
+# CD-3: nothing urgent -> same item, then same compound family, then the cheapest matrix changeover, then the next;
+#   next-day lots of the same family may join today's run (shelf life / first consumer still bound it).
+cover_dispatch:
+  enabled: false   # v36 (user): v26 rule set + v27-v31 rules -> OFF
+  building_threshold_h: 8
+  upstream_margin_h: 2
+  ready_slack_min: 60               # building: rows that can start within 60 min of the TBM's earliest are "ready"
+  tie_break: fewer_moulds
+  mixing:                           # mixers join the family pass (family = main BOM input)
+    enabled: true
+    machines: ["K270M", "K310", "K430-1", "K430-2", "F270", "F440"]
+    max_delay_h: 12
+    max_pull_h: 12
+    fixed_compounds: ["30G", "IL3", "IL5", "B1", "B2", "B99", "29MG", "ML405", "ML406", "ML605",
+                      "MB100", "MB200", "XMB98", "JT444", "JT466", "MK3"]   # butyl / IL / sticky / follower rules keep their place
+
+# ═══ V37 EFFICIENCY = 1 (2026-10-06, user) ═══════════════════════════════════════════════════════════════
+# Every routing efficiency is taken as 1.0 (was routing 0.96; CAP PLY SLITTER override 0.78 incl. bobbin changes):
+# upstream run time (phase2 op_duration_min, incl. mixing), building time (phase5 V23 cycle / eff) and the checks.
+# Curing is unchanged (cure time + allowance has no efficiency). Delete the key (or null) to use the routing again.
+efficiency_override: 1.0
+
+# ═══ V39 BUTYL DAY BLOCK (2026-10-06, user; mixing rules of 01-Oct) ═══════════════════════════════════════════
+# One butyl block per group per plant day (07:00 -> 07:00), butyl and butyl-friendly compounds together in sequence:
+#   Final Mixer - Before Butyl : butyl-friendly (B1/B2/B99) immediately before EVERY butyl compound (30G / IL3 / IL5)
+#   Final Mixer - After Butyl  : 120 s clean-out after every butyl compound
+#   Master Mixer - Butyl Seq.  : butyl-friendly (MB100/MB200/XMB98) immediately before AND after every 29MG / ML405 / ML605
+#   IL3 or IL5                 : all of a day's batches of each in one run (inside the block)
+# Real butyl-friendly lots of the day first (alternating items), else a prep lot of prep_lot_batches. Master block on
+# K430-2 (the only master routed for 29MG and all butyl-friendly compounds; K270M cannot make MB100/MB200/XMB98).
+# ═══ V47 MIXING RULES (2026-10-08, user; baseline v42 4RC settings) ═══════════════════════════════════════════
+# A one compound on ONE mixer only (never split across mixers) -- each compound gets one routing-eligible mixer for the
+#   plan (butyl / butyl-friendly on their block mixer, the rest balanced by run time), so no day has it on two mixers.
+# B one run makes AT ONCE at least the next cover_h (15 h) of demand -- 24 h for IL3 / IL5 and the 4RC compounds --
+#   and the same compound is not started again within gap_h (15 h) / gap_h_long (24 h) of its previous run's start.
+#   Exempt: butyl-friendly compounds (B99 / B1 / B2 user; MB100 / MB200 / XMB98 run between butyl compounds by rule).
+# C final mixers ~230 batches per shift (TARGET, not a cap): masters are made early enough that each final lot can
+#   start from its own shelf-life floor (last use - (max aging - margin)).
+mix_planner:                        # v56 (user 2026-10-09): stock-coverage mixing planner (code: mixer-improvement/mix_planner.py)
+  enabled: true                     # all compound lots planned first, forward, by coverage; every mixing rule built in;
+  cover_h: 15                       # v64: back to 15 (v63 test 20 -- see log) (gap stays 15 h, gap_h); a run covers the next 15 h of need (24 h IL3 / IL5 / 4RC compounds), back to back,
+  cover_h_long: 24                  # v64: back to 24 (v63 test 30) (gap stays 24 h, gap_h_long); no changeover inside, compound not repeated within that time; one mixer per plant day;
+  gap_h: 15                         # v63: repeat-gap RULE (not repeated within 15 h)
+  gap_h_long: 24                    # v63: repeat-gap RULE for IL3 / IL5 / 4RC compounds (24 h)
+  max_wait_min: 15                  # daily butyl / IL blocks with friendly before / after and 120 s clean-out; shelf life
+  shelf_margin_h: 2                 # caps a run (MT871-type covered to shelf life); masters planned before their finals.
+  changeover_s: 60
+  tr100_s: 300
+  cleanout_s: 120
+  prep_lot_batches: 5
+  butyl_cleanout_to: any            # back to v65 (v67 test: other); v67 (user 2026-10-10): 120 s clean-out only butyl -> non-butyl / non-friendly; butyl -> butyl / friendly = 60 s changeover
+  fourrc_due:                       # v68 (user 2026-10-10): 901 first -- skim compound ranked by its 901 lot's start need
+    enabled: false                   # v93 TESTED ON (127,255, -2,004 vs v87), not kept. (901 need - 901 run time - buffer_h); all mixing rules still checked
+    buffer_h: 4
+  closed_loop:                      # v69 #3 (user 2026-10-10): phase 5 + 6 re-run with the mixers re-planned on round-1 real needs
+    enabled: true
+    qty_feedback: true              # v76 (user 2026-10-11): extra quantity phase 5 schedules (4RC, prep runs) is fed back into the
+                                    # compound lots (finals -> masters) before round 2, so mixing makes it (run_pipeline._qty_feedback)
+    rounds: 3                       # v77: 3 (quantity feedback also after round 2; was 2)
+    buffer_h: 2
+  starve_boost:                     # v66 (user 2026-10-10): live master priority -- when F270 / K310 run out of planned work
+    enabled: false                   # within horizon_h, masters blocking the top_finals most urgent waiting final lots get
+    horizon_h: 3                    # boost_h more urgency on the master mixers (all mixing rules still checked)
+    top_finals: 6
+    boost_h: 48
+    final_mixers: ["F270", "K310"]
+  level_load:                       # v62 (user 2026-10-10): smooth the final demand peaks -- backward finite-capacity pass,
+    enabled: true                   # a peak day's excess is made on the days before (shelf-life floor still applies)
+    final_mixers: 2
+    master_mixers: 4
+    masters: true
+  item_priority_h:                  # v60: extra planner priority (h) per compound -- B616M feeds CAP 66 (24 h shelf life)
+    B616M: 8                        # v90 TESTED 24 h (not kept): 8 -> 24 h, CAP 66 compound a day ahead (as B1144) so cap strip is never late
+    B1144: 24                       # v75 (user 2026-10-11): belt edge filler 1802 never waits for compound -- B1144 and its
+    B186: 24                        # chain (B186 -> MB185 -> MB184 -> MB183) ranked a day ahead, as the plant keeps ~1 day of
+    MB185: 24                       # B1144 stock (beltedgefiller_schedule.xlsx: age at use median 27 h); shelf-life floor kept
+    MB184: 24
+    MB183: 24
+    # v89 / v90 TESTED, not kept: inner-liner compounds 8 h ahead (B355, B458, EFA, GB35, GB58, GL6, GL7: 8)
+  gap_h_fourrc: null                # v94 TESTED 12 (rule relaxed, 52 x used; 127,812), off = rule. v94 (user 2026-10-13, RULE RELAXED #1): 4RC skim compounds may repeat after 12 h (rule: 24 h); remove = rule
+  second_mixer_cover_h: 0           # v94 TESTED 8 (never used), off = rule. v94 (user 2026-10-13, RULE RELAXED #2): 2nd mixer same plant day when the next lot is needed within 8 h; 0 = rule
+  final_cleanout_after_s: 120       # v98 (user 2026-10-13): ON again. DEFAULT v87 = 0; was 120 STANDING (user 2026-10-13): 120 s clean-out after EVERY final compound, every mixer (audit M9); 0 = v87
+  machine_factor:                   # v91: run-time factor per "ITEM|MIXER" (kg/h differs off the routing home). T638 on K430-2:
+    "T638|K430-2": 1.034            # plant 335 kg / 205.2 s = 5,877 kg/h vs routing 225 kg / 133.3 s = 6,078 kg/h -> x1.034
+  fourrc_priority_h: 8              # v84 TESTED 24 (4RC compounds a day ahead): cured 126,196 vs v82 127,864 -> not kept. v58: 4RC skim compounds (and their masters) ranked 8 h ahead (shelf-life floor still applies)
+tbr_bead_one_step:                  # v74 (user 2026-10-11): plant TDA 2403/2404/2405 winds + apexes a TBR bead in ONE booking
+  enabled: true                     # (tda_schedule.csv). apply_ctb_approximations.py: TBWB inputs (S54, bead wire) -> TBAPBD
+                                    # directly, TBWB routing rows dropped; apexed-bead routing rate unchanged. false = v72 (2 steps)
+plant_mixing_cycles:                # v91 (user 2026-10-13): plant-approved cycle time for FINAL compounds = median batch-to-batch
+  enabled: true                     # v98 (user 2026-10-13): ON again (finals, faster only). DEFAULT v87 = false; was STANDING: faster plant cycles. v92 TESTED faster-only (125,662), v91 all (129,309). Plant cycle only where FASTER (faster_only). v91 TESTED all (129,309). Time in the plant's own bookings 04-11 Oct (CTP_Plant_Schedule);
+  file: latest_schedule/plant-schedule/plant_mixing_cycles_04_10oct.csv   # build_plant_mixing_cycles.py
+  min_intervals: 20                 # pairs measured on >= 20 batch intervals only; others keep the DB routing cycle
+  operations: ["FINAL MIXING"]      # v87 default (switch off); v96 had ["FINAL MIXING", "MASTER MIXING"] (user): masters too (faster only); v91-v95: FINAL MIXING only
+  faster_only: true                 # v92 (user): slower plant values ignored (routing kept); false = v91 (both)
+final_on_master_mixers:             # v91 (user 2026-10-13): finals the plant runs on a master mixer may be planned there
+  enabled: true                     # v98 (user 2026-10-13): ON again. DEFAULT v87 = false; was STANDING (user 2026-10-13: "run other final compounds on master mixer as the plant does", all runs until said otherwise) (v91 / v92: only T638 on K430-2: 222 batches 04-11 Oct). 120 s clean-out before AND after a final on
+  pairs: {"*": ["K270M", "K430-1", "K430-2", "F440"]}   # "*" = every final; routing batch size / cycle (preference sheet has no
+                                    # final weights on master mixers). 120 s clean-out after every final (mix_planner.final_cleanout_after_s)
+relaxed_mixing:                     # EVALUATION ONLY (user 2026-10-11, run v75_relaxed): mixing cycle / batch kg from the plant
+  enabled: false                    # 08-Oct values where more favourable (build_relaxed_mixing.py). false = routing (v75, the best version)
+  file: latest_schedule/plant-schedule/relaxed_mixing_overrides.csv
+master_files: {}                    # v85 (user 2026-10-13): EVERY master from the database JK_CTP_PPDS -- no loose files.
+#  v56-v84 used:  CTP_Master_BOM: latest_schedule/BOM_Routing_9oct/CTP_Master_BOM_v0.xlsx
+#                 CTP_Master_Routing: latest_schedule/BOM_Routing_9oct/CTP_Master_Routing_v0.xlsx
+aging_relax:                        # v50 EXPERIMENT (user 2026-10-09): shelf life (max aging) x max_factor for every item except
+  enabled: false                    # green tyres (72 h kept); min aging unchanged. Applied in build_sep_inputs.py. false = plant values.
+  max_factor: 1.3
+mixing_v47:
+  enabled: false                    # v56: OFF -- the mixing planner (mix_planner) applies the 08-Oct rules itself; keys below still read by the audit
+  placement_aware: false            # v53: rule B at placement -- a lot joins its compound's run or starts >= gap after any run
+  one_mixer_per_day: true
+  one_mixer_mode: day               # v49: one mixer per compound per PLANT DAY (may differ between days); plan = v47/v48 one mixer for the whole plan
+  cover_windows: true
+  repeat_gap: true
+  cover_h: 15
+  cover_h_long: 24
+  gap_h: 15
+  gap_h_long: 24
+  long_items: ["IL3", "IL5", "B1144"]   # v75: B1144 runs cover 24 h of 1802 need (24 h repeat gap, as IL3 / IL5 / 4RC)
+  long_fourrc_compounds: true       # + compounds that feed CTP_Master_FRC items (BOM children of the 901 items)
+  exempt: ["B99", "B1", "B2", "MB100", "MB200", "XMB98"]
+  shelf_margin_h: 2
+  final_feed: {enabled: false, shelf_margin_h: 2}   # v53: off (v47-v51 on)
+  final_target_batches_per_shift: 230   # report target only (no cap)
+  catch_up_merge: false
+  backlog_merge: group              # v54 (user): a late compound runs its due batches straight in ONE longer run (estimated
+                                    # mixing starts within 15 h / 24 h -> one lot), so it never has to wait for the gap
+  max_run_h: 24                     # v54: longest merged run (h)             # v48: a late window joins the current run of its compound (one bigger run) instead of waiting the gap
+repair_compaction:                  # v53 (user 2026-10-09): mixers must not stand idle -- the final repair may move a lot back
+  enabled: true                     # v69 #1 (user 2026-10-10): ON -- lots and build rows pushed late may come back towards their placement start                    # towards its PLACEMENT start (machine order, changeovers, inputs, PM, creel, shelf life at
+                                    # its latest consumer kept); build rows likewise. false = later-only repair (v1-v52).
+queue_unblock:                      # v49 (user 2026-10-08): no lot waits behind a lot whose input is missing
+  enabled: false                    # lots keep their planned order; when the next lot's input is not ready within
+  min_wait_min: 30                  # min_wait_min the machine runs the next READY lot instead (same item first; 901:
+  machine_groups: [["901"], ["802", "801"]]   # creel 240 min kept, reload filled with fabric / same wire); 901 first, then belt cutters
+butyl_day_block:
+  enabled: true
+  cleanout_after_sec: 120
+  prep_lot_batches: 5               # BRM-01 minimum lot
+  groups:
+    final:  {mixer: "F270",   butyl: ["IL3", "IL5", "30G"],     friendly: ["B99", "B1", "B2"],         friendly_after: false,
+             campaigns: [["IL3", "IL5"]],   # v41 (user): IL3 + IL5 together in ONE go a day: B99 -> IL3 -> IL5 -> 120 s
+             friendly_mode: block,          # v61 (user 2026-10-10): friendly before the butyl BLOCK only (B99 -> IL3 -> IL5 -> 120 s -> 30G)
+             start_when_ready: true}        # v61: the block starts when its butyl masters are aged -- F270 never waits inside it
+    master: {mixer: "K430-2", butyl: ["29MG", "ML405", "ML605"], friendly: ["XMB98", "MB200", "MB100"], friendly_after: true,
+             friendly_mode: block,          # v61 (user): friendly at the start and end only: MB -> 29MG -> ML405 -> ML605 -> MB
+             earliest_hour: 17}             # v61 (user, as the plant): butyl masters made in the evening, aged overnight (max 1 day)
+  friendly_mode: block               # v61: audit M1 / M3 at block level (friendly before / after the whole butyl block)
+
+# Schedule workbook layout (user 2026-10-06): original layout -- one Curing / Building / Upstream schedule sheet,
+# no changeover / clean-out rows. true = PCR / TBR sheets with light-blue changeover / clean-out rows.
+schedule_workbook:
+  split_by_line: false

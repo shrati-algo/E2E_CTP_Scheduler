@@ -1,0 +1,31 @@
+# ==============================================================================
+#  .gitattributes — CTP end-to-end scheduler
+#
+#  The data files in this repo are read byte-for-byte by pandas. Git must NOT
+#  rewrite their line endings on checkout, or a Windows-authored CSV cloned on
+#  Linux (or vice versa) can differ from the one the pipeline was verified on.
+# ==============================================================================
+
+# Source: normalise to LF in the repo, native on checkout.
+*.py      text diff=python
+*.md      text
+*.yaml    text
+*.yml     text
+*.txt     text
+.env.example text
+.gitignore   text
+.gitattributes text
+
+# Data: leave EXACTLY as committed. No line-ending translation.
+*.csv     -text
+*.csv.gz  -text
+*.tsv     -text
+
+# Binary: never diff, never translate.
+*.xlsx    binary
+*.xls     binary
+*.xlsm    binary
+*.pdf     binary
+*.parquet binary
+*.gz      binary
+*.zip     binary

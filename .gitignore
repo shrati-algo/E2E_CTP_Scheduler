@@ -1,0 +1,42 @@
+# ==============================================================================
+#  .gitignore -- PUBLIC REPO, CODE + CONFIG + DOCS ONLY (user 2026-10-14)
+#  Allow-list: everything is ignored unless listed below. Never pushed:
+#  db_pipeline/.env (DB login), DB copies (db_pipeline/raw*), plant plans,
+#  inputs / outputs, latest_schedule/vNN run outputs, xlsx / csv data.
+#  The previous "clone and run" .gitignore (tracks input data) is kept locally
+#  as .gitignore.clone_and_run.bak and is NOT pushed.
+# ==============================================================================
+*
+!*/
+
+# code
+!/*.py
+!/phases/*.py
+!/mixer-improvement/*.py
+!/mixer-improvement/analysis_scripts/*.py
+!/db_pipeline/*.py
+!/planning_engine/*.py
+!/testing/*.py
+!/latest_schedule/plant-schedule/*.py
+
+# config (switches only -- no credentials)
+!/config*.yaml
+!/requirements*.txt
+!/.gitignore
+!/.gitattributes
+!/.env.example
+!/db_pipeline/.env.example
+
+# docs and logs
+!/*.md
+!/docs/*.md
+!/mixer-improvement/README.md
+!/db_pipeline/README.md
+!/latest_schedule/RUN_LOG.md
+!/latest_schedule/BUSINESS_RULES_LOG.md
+!/latest_schedule/ASSUMPTIONS_LOG.md
+
+# always out, even if a rule above matches
+db_pipeline/.env
+.env
+**/__pycache__/

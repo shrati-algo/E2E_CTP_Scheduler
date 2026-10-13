@@ -1,0 +1,21 @@
+# ==============================================================================
+#  CTP end-to-end scheduler — OPTIONAL extras
+#
+#      pip install -r requirements.txt -r requirements-dev.txt
+#
+#  Nothing here is needed for `python run_scheduler.py --offline` to produce a
+#  schedule. Each package unlocks one auxiliary tool.
+# ==============================================================================
+
+# ---- Validation suite:  python testing/run_tests.py --refresh ----------------
+# validate_phase3.py uses networkx for cycle detection. It auto-pip-installs
+# networkx if missing, and silently falls back to a manual DFS if that fails —
+# so this is a convenience pin, not a hard requirement.
+networkx>=3.0
+
+# ---- planning_engine/ (MES reverse-engineering, separate from the scheduler) --
+# mes_extract.py caches the plant MES exports as .parquet.
+pyarrow>=14.0
+
+# ---- Faster .xlsx writing (optional; openpyxl is the default engine) ---------
+XlsxWriter>=3.1
