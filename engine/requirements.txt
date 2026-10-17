@@ -1,0 +1,24 @@
+# ==============================================================================
+#  CTP end-to-end scheduler — runtime dependencies
+#
+#      pip install -r requirements.txt
+#
+#  VERIFIED ENVIRONMENT (a full offline run was executed on exactly this):
+#      Python 3.14.3 · pandas 3.0.2 · numpy 2.4.4 · openpyxl 3.1.5 · PyYAML 6.0.3
+#  Also known to run on Python 3.10–3.12 with pandas 2.x.
+#  The floors below are the minimums; newer is fine.
+# ==============================================================================
+
+# ---- CORE — required for EVERY run, including `--offline` --------------------
+pandas>=1.5           # every phase; the whole pipeline is DataFrame-based
+numpy>=1.23           # numeric kernels inside phase2/phase4/phase5
+openpyxl>=3.1         # read .xlsx plant masters + write CTP_FLOOR_SCHEDULE.xlsx
+PyYAML>=6.0           # config.yaml — each phase loads it independently
+
+# ---- LIVE DATABASE — required only for the default (non-offline) run ---------
+# `python run_scheduler.py` pulls masters from jkplanning_CTP (MySQL).
+# `python run_scheduler.py --offline` does NOT need these two.
+SQLAlchemy>=2.0
+PyMySQL>=1.0          # MySQL driver behind the mysql+pymysql:// URL
+
+# ---- Optional extras are in requirements-dev.txt (validation suite, MES) -----
