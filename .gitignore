@@ -1,0 +1,24 @@
+# ==============================================================================
+#  .gitignore -- PUBLIC REPO, CODE + CONFIG + DOCS ONLY (same rule as main, user 2026-10-14)
+#  Never pushed: engine/db_pipeline/.env (DB login), the database copy (engine/db_pipeline/raw),
+#  plant plans (plans/*), reference data (xlsx / csv), engine working files and run outputs.
+#  See engine/DATA_NOT_IN_REPO.md for the files to supply locally.
+# ==============================================================================
+*
+!*/
+!/.gitignore
+!/README.md
+!/run_schedule.py
+!/docs/*.md
+!/docs/reference/*.md
+!/plans/README.md
+!/engine/*.py
+!/engine/config.yaml
+!/engine/requirements.txt
+!/engine/DATA_NOT_IN_REPO.md
+!/engine/phases/*.py
+!/engine/mixer-improvement/*.py
+!/engine/mixer-improvement/README.md
+!/engine/db_pipeline/*.py
+!/engine/db_pipeline/README.md
+!/engine/db_pipeline/.env.example
