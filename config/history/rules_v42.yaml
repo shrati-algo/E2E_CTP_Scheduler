@@ -1,0 +1,28 @@
+# =====================================================================
+#  rules_v42.yaml - FINAL v42: v41 + builder setups + cold start (kept steps)
+#
+#  Measured one step at a time on data-ppds-v38 (cured, eligible 161,670):
+#    v41   100,894                              base
+#    v42a  100,890  builder setup by real predecessor + BLD ids   KEEP (correctness)
+#    v42b  107,016  + 6a cut stock netted                          KEEP (+6,126)
+#    v42c  106,782  + 6b BOM self-reference (B616M 24x) fixed      KEEP (correctness;
+#                   -1.02M kg phantom compound, -172 PCR mixer-h; TBR -234)
+#    v42d  108,122  + 6c kit-first FEFO both lines: PCR +3,914, TBR -2,574
+#    v42e  108,148  6c on PCR only: PCR 91,024 but TBR STILL 17,124 (-2,548):
+#                   PCR's kit-first re-prioritises the SHARED mixers / 901 in
+#                   the joint placement and TBR's day-1 delay doubles.
+#                   -> 6c DROPPED (fails "no line loses tyres")
+#    6d (ramp window) not run: the kit gate already starts each trolley at its
+#    real kit-ready time and 0 of 217 day-1..3 kits are wholly in stock, so a
+#    "complete kits only" window would admit nothing.
+#  Also (code): eligible SKUs draw GT stock before DATA_BLOCKED SKUs.
+# =====================================================================
+inherit_from: rules_v42c.yaml
+
+meta:
+  run: e2e_v42
+  goal: "v41 + builder setups + cut stock + BOM self-ref fix + GT stock eligible-first"
+  data: "data-ppds-v38/"
+
+cold_start:
+  kit_complete_fefo: false     # 6c measured and dropped - see header

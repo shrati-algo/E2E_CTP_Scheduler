@@ -1,0 +1,275 @@
+# CTP scheduler — the rule file.
+#
+# THIS FILE IS THE ONLY KNOB SOURCE. Nothing in engine/ hard-codes a plant rule;
+# every one is read from here, and every rule that fires is reported by name in
+# the run output so a number in the schedule can always be traced to the line
+# that produced it.
+#
+# Plant rules BR-1..BR-4 are transcribed from `BUSINESS_RULES 1.md`
+# ("CTP Scheduler — Business Rules (authoritative, always apply)"). They
+# OVERRIDE anything derived from the routing or the aging master.
+
+meta:
+  source: "BUSINESS_RULES 1.md"
+  transcribed: 2026-09-26
+  note: >
+    Plant-confirmed rules that override default/derived values. Where this file
+    and the database disagree, this file wins and the engine says so.
+
+# ---------------------------------------------------------------- BR-1 / BR-2
+# EFFECTIVE LINE SPEED = PARALLEL STRANDS x SINGLE-STRAND SPEED.
+#
+#   effective_line_speed = n_parallel_strands x base_speed_per_strand
+#   proc_time(lot)       = lot_length / effective_line_speed
+#
+# These machines run several rolls / bobins / strips in parallel, so the routing's
+# per-strand speed understates throughput by 4-16x. Modelling them single-strand
+# fabricates belt and ply starvation on exactly the short-shelf feeders that gate
+# the drum.
+linespeed:
+  enabled: true
+
+  # BR-1, the plant roll table (2026-08-06, authoritative roll counts).
+  # item code -> parallel rolls.
+  rolls:
+    EG01: 15            # 53 mm, 300 m roll
+    EG02: 11            # 70 mm
+    EG03: 7             # 100 mm   (added 08-06; was missing -> single-strand)
+    TEG-01: 11          # TBR 70/140 mm. 11 for BELT, 4 for ply; belt is the feed
+    TEG-02: 9           # TBR 80 mm  (wired 08-06; was skipped as "TBR single-strand")
+    CAP 66: 11          # cap strip, 144 mm
+    BPG01: 7            # 100 mm
+
+  # BR-1, slit forms inherit their calender parent's roll count. The slitter runs
+  # the same N strands in parallel. If only the calender is multiplied, the
+  # SLITTER becomes a false bottleneck and the whole drum slides ~8 days.
+  slit_inherits:
+    EGSL01: {parent: EG01, rolls: 15}
+    EGSL02: {parent: EG02, rolls: 11}
+    BPGSL01: {parent: BPG01, rolls: 7}
+    GUM STRIP: {parent: TEG-02, rolls: 9}         # was raw 30 -> 270 m/min
+    STC-WRAP: {parent: TEG-01, rolls: 11}
+    TB WRAP B1144: {parent: EG02, rolls: 11}      # was raw 30 -> 330 m/min
+
+  # NOT covered by the plant table — deliberately left single-strand.
+  # Ask the plant for a roll count before wiring either of these.
+  single_strand:
+    - BP01
+    # EG03/EGSL03 have no plant roll count for the SLIT form yet.
+
+  # BR-1, cap strip slitters: the two machines are NOT the same speed.
+  # This is a genuine per-(item, machine) spec — precisely what CTP's empty
+  # `all_machine_spec` column fails to provide anywhere else.
+  per_machine:
+    "CAP 66 - CAPSTRIP":
+      "701": {base_mpm: 33, strands: 12, effective: 396}   # slitter 1
+      "702": {base_mpm: 60, strands: 16, effective: 960}   # slitter 2
+
+  # BR-2, chaffer slitter (2401/2402, routing 22 M/MIN) slits into N parallel
+  # strips. The plant's Width column is width*N; N is the sum of the multipliers.
+  chaffer_strips:
+    MONOCHAF80: 4       # 80*4
+    MONOCHAF120: 4      # 120*4
+    FILLIPER2: 5        # 75*2 + 90*3
+    BRTTL SLT: 5
+    SNCT001: 6          # 75*6
+    SNCT002: 6          # 50*6
+    SNCT003: 4          # 120*4
+    SNCT004: 4          # 100*4
+    EUSNCT001: 6
+    EUSNCT003: 4
+
+# ---------------------------------------------------------------------- BR-3
+# ONE CUT MAKES BOTH BELTS OF A TYRE. The bias cutter cuts the steel-belt
+# calender roll and produces B1 + B2 in one cut, so the cut count is HALF the
+# piece count. Modelled at 1 cut = 1 belt it doubles the cuts and 2001 becomes a
+# false belt/ply bottleneck that tails the schedule to ~33 days.
+pieces_per_cut:
+  enabled: true
+  by_operation:
+    BIAS CUTTER: 2
+    Bios cutter: 2        # the TBR routing's spelling of the same operation
+    BELT CUTTER: 2
+
+# ---------------------------------------------------------------------- BR-5
+# BIAS / BIOS CUTTER — FOLLOW THE CHILD AND MULTIPLY IT BY THE BIAS OUTPUT.
+#   (2026-09-26, user-confirmed)
+#
+# THE RULE
+#   For an item the bias cutter makes, the quantity of its CHILD is
+#
+#       child demand = child_quantity  x  the output the bias cutter makes
+#
+#   i.e. the child is CHAIN-MULTIPLIED by the cutter's own output, instead of
+#   being read as a per-tyre absolute the way every other CTP BOM edge is.
+#   The multiplication factor is the child's own `child_quantity` from the BOM,
+#   per item - it is not one constant across the cutter.
+#
+# WHY THIS IS AN EXCEPTION WORTH SPELLING OUT
+#   CTP's BOM is path-explicit: `child_quantity` is already per-tyre absolute,
+#   so the walk never chain-multiplies. The bias cutter breaks that, because
+#   its OUTPUT is itself a quantity (metres of narrow strip, or pieces), not a
+#   per-tyre count - machine 2001 cuts a wide calendered roll at an angle and
+#   splices it into a long band, so output metres are ~20x input metres. Read
+#   as a per-tyre absolute, the calendered roll behind it is under-demanded.
+#
+# MEASURED ON e2e_v4, TBR: BRTTL goes 37,614 M -> 109,238 M (2.9x).
+#
+# SCOPE
+#   ONE level: the cutter's own children. Below that the walk reverts to
+#   per-tyre absolute, because those edges are already normalised.
+#
+# THE TWO SPELLINGS ARE ONE MACHINE
+#   PCR's routing calls the operation `BIAS CUTTER`, TBR's calls it
+#   `Bios cutter`; both run on 2001. Matching on the machine instead would be
+#   wrong - 2001 carries routing rows that are not bias cutting.
+bias_cutter:
+  enabled: true
+  rule: "child demand = child_quantity x bias cutter output (chain-multiplied)"
+  operations:
+    - BIAS CUTTER          # PCR routing spelling
+    - Bios cutter          # TBR routing spelling - same machine, 2001
+
+# ---------------------------------------------------------------------- BR-4
+# AUTHORITATIVE COMPONENT AGING — plant spec CTE0.06-FR.02 (PCR).
+# This OVERRIDES the per-item aging master from the database on every run.
+# Hours. `min` is maturity, `max` is shelf life.
+aging_spec:
+  enabled: true
+  by_item_type:
+    Steel Belt:                 {min: 4,  max: 96}    # was 24 in the DB
+    CALANDARED ROLL:            {min: 4,  max: 72}
+    Ply:                        {min: 4,  max: 72}    # user-corrected 08-03
+    Cut Plies:                  {min: 0,  max: 24}
+    Breaker:                    {min: 0,  max: 24}
+    SLITTED MATERIAL:           {min: 0,  max: 24}
+    Slitted Material:           {min: 0,  max: 24}
+    PRE CUT ROLL MATERIAL:      {min: 0,  max: 24}
+    Cap Strip:                  {min: 0,  max: 24}
+    Capstrip Mother Roll:       {min: 0,  max: 72}
+    Edge Gum:                   {min: 2,  max: 72}    # was 24, caused false EG01 violations
+    Edge Strip:                 {min: 0,  max: 48}
+    Steel Belt Edge Strip:      {min: 0,  max: 48}
+    Inner Liner:                {min: 6,  max: 72}
+    INNER LINER:                {min: 6,  max: 72}
+    SideWall:                   {min: 2,  max: 72}
+    Tread:                      {min: 2,  max: 72}
+    Bead Apex:                  {min: 1,  max: 48}
+    Bead Bundle:                {min: 0,  max: 48}    # uncovered
+    Bead wire:                  {min: 0,  max: 4320}  # 6 months
+    Green Tyres:                {min: 0.25, max: 48}
+    MASTER COMPOUND:            {min: 4,  max: 360}   # non-silica
+    FINAL COMPOUND:             {min: 4,  max: 120}   # non-silica
+  # OPEN FLAGS — the plant owes a code list before these can be finished.
+  open_flags:
+    - "silica TREAD must be 24 h, not 72 h — needs the silica code list"
+    - "silica MASTER compound must be 72 h, not 360 h"
+    - "silica/butyl FINAL compound must be 72 h, not 120 h"
+    - "cobalt/butyl MASTER compound must be 24 h"
+    - "belt-skim FINAL compound is 96 h"
+
+# ---------------------------------------------------------------- changeover
+# `jkt_changeover_matrix_combined` is keyed (machine ROLE, from_code, to_code) —
+# 293,166 pairs, 25 roles, median 17 min. The roles are descriptive names, not
+# machine ids, so a machine only reaches the matrix through this map.
+#
+# MEASURED on run e2e_v2 before this map was completed: of 4,228 real item
+# transitions, 61.5% found an exact (role, from, to) pair, 4.3% fell to the
+# role median, and 34.2% got a flat 7 min — every one of those because the
+# machine had NO role, not because the matrix lacked the pair.
+changeover:
+  # STRICTLY THE MATRIX. `jkt_changeover_matrix_combined` is the ONLY source of
+  # a changeover minute. No BTP constant, no department rule, no invented
+  # default. Where the matrix is silent the minute is NOT priced, it is counted
+  # and reported — an unpriced transition understates setup, and saying so is
+  # the only honest treatment. `source_policy: matrix_only`.
+  source_policy: matrix_only
+  unpriced_min: 0           # what a transition the matrix cannot price costs
+  allow_role_median: true   # a role's own median IS the matrix, so it stays
+
+  # machine id -> the matrix's own `machine` value
+  role_map:
+    "1001": Triplex PCR SW
+    "1002": Quintoplex PCR Tread
+    "1101": Roller Head Calendar PCR
+    "1102": Edge Gum Calendar          # unregistered machine; the matrix knows it
+    "1103": Ply Cutter PCR
+    "1104": Fisher Cutter PCR
+    "1201": PCR Bead Winding
+    "1801": Duplex TBR Tread
+    "1803": Quadraplex TBR SW
+    "1901": Roller Head Calendar TBR
+    "2001": Bias Cutter TBR            # unregistered machine; the matrix knows it
+    "201": PCR Bead Apexing
+    "202": PCR Bead Apexing
+    "2101": Body Ply Cutter TBR
+    "2401": Chaffer Slitter            # the CHAFFER slitter is 2401/2402 …
+    "2402": Chaffer Slitter
+    "2403": TBR Bead Apexing TDA 1
+    "2404": TBR Bead Apexing TDA 2
+    "2405": TBR Bead Apexing TDA 3
+    "601": Cap Ply Cutter
+    "801": Belt Cutter PCR
+    "802": Belt Cutter TBR
+    "901": 4 RC Calendar
+    "ASSUMED-BEAD WINDING": TBR Bead Winding
+    # … and 701/702 are the CAP STRIP slitters, which are NOT the same machine.
+    # They were wrongly pointed at "Chaffer Slitter" and took its 3 min.
+    # The matrix has no cap-strip-slitter role — see `no_matrix_role` below.
+
+  # Machines the matrix genuinely does not cover. Their transitions are
+  # UNPRICED (0 min) and counted, per source_policy: matrix_only. Do not invent
+  # a role for any of these — the fix is a matrix row, not a guess.
+  no_matrix_role:
+    "101": mixing
+    "102": mixing
+    "103": mixing
+    "104": mixing
+    "105": mixing
+    "106": mixing
+    "701": cap strip slitter
+    "702": cap strip slitter
+    "1802": bef extruder
+    "2201": tbr pre assembly
+    "2501": tbr doubling
+    "2502": tbr doubling
+
+
+# ------------------------------------------------------------ shared machines
+# PCR AND TBR SHARE MACHINES, SO THEY MUST BE SCHEDULED ON ONE CALENDAR.
+#
+# Run as two independent engines, every shared machine is booked twice: on run
+# e2e_v1 all six mixers came out 131-173% and the cap ply cutter 252%, because
+# each line saw an empty machine the other was already using. Joint placement
+# puts both lines' lots on ONE machine calendar, so a shared machine is booked
+# once and the two lines genuinely compete for it.
+#
+# `joint: all` dispatches EVERY machine jointly, which is simplest and strictly
+# correct: a machine only one line uses behaves identically either way.
+shared_machines:
+  joint: all
+  # For the record - Master_WC_Master work centres both routings name:
+  shared_both_lines: ["101", "103", "104", "105", "106", "601", "901",
+                      "1102", "2001", "2401", "2402"]
+  # Used by BOTH routings but absent from Master_WC_Master (see Machine Gaps):
+  unregistered_shared: ["1102", "2001", "2401", "2402"]
+
+# ------------------------------------------------------------- engine settings
+# Not plant rules - the engine's own knobs, kept here so a run is reproducible
+# from one file. Every value below is what run e2e_v4 actually used.
+engine:
+  open_h: 24              # hours before the first build the floor may run.
+                          # NOTE: BTP's own ph81 runs 0. Unsettled - see
+                          # V10_COMPLIANCE.md section 3.3.
+  campaign_h: 72          # window within which same-item lots are grouped
+  policy: shift           # building moves to when its kit is ready, and is reported
+  flow_gap_h: 8           # a run ends after this long a gap in the item's demand
+  mix_window_h: 72        # how much requirement one mixing run may cover
+  mix_mpq_batches: 3      # CTP's own jkt_mpq says 3 charges (BTP's is 4)
+  max_lot_h: 8            # A03 stand-in where the MPQ master states no maximum
+  lead_shelf_fraction: 0.40
+  efficiency: 1.0         # v10's standing 100% OEE rule.
+                          # NOTE: the CTP routing states 0.96 on every row.
+  default_master_aging_h: 360
+  default_final_aging_h: 120
+  transfer_min: 10

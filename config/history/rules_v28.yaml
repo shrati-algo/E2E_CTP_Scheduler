@@ -1,0 +1,61 @@
+# =====================================================================
+#  rules_v28.yaml - ALIGNED TO ASSUMPTIONS.MD
+#
+#  v27 was built up change by change from the data. ASSUMPTIONS.MD is the
+#  plant-facing statement of how the schedule is MEANT to be built. Where the
+#  two disagreed, this file moves the engine to the document and says so.
+#  Section references are to ASSUMPTIONS.MD.
+# =====================================================================
+inherit_from: rules_v27.yaml
+
+meta:
+  run: e2e_v28
+  goal: "the engine as ASSUMPTIONS.MD describes it"
+
+# --- SS C: "Cap strip and edge gum (including GUM STRIP) are assumed
+#     available, following V5's logic."  PLANT-CONFIRMED.
+#     v27 MADE all of these. Cap Strip alone is 3.37M units of PCR demand - the
+#     largest single item type on the line - so this is the biggest change in
+#     the file by a wide margin.
+purchased_item_types:
+  - "Cap Strip"
+  - "Cap strip"
+  - "Capstrip Mother Roll"
+  - "Edge Gum"
+  - "GUM STRIP"
+
+# --- SS E: "mixer minimum 5 batches (BRM-01)".
+#     v27 took the charge count from CTP_Master_MPQ instead, which states 3.
+#     The document is explicit, so BRM-01's 5 wins and the master's 3 does not.
+mpq:
+  use_master_batches: false
+
+engine:
+  # --- SS F: "Upstream production may start up to 48 h before plan start."
+  #     v27 ran 24 h.
+  open_h: 48
+
+lot_sizing:
+  # --- SS E: "sidewall, tread and inner-liner lots cover at most 24 h of
+  #     building." v27 had the span cap OFF (0) because measuring it on v15 made
+  #     it a loss. The document states it, so it goes back on at 24 h - and the
+  #     result is reported rather than assumed.
+  need_span_cap_h: 24
+
+validation:
+  # --- SS E: "Maximum aging is not a hard stop, only minimised and reported."
+  #     v27 FAILED the run on check 7. The document is explicit that expiry is
+  #     reported, not enforced - a hard stop scrapped material nothing remakes
+  #     and cost output. Check 7 still measures and still writes
+  #     SHELF_LIFE_VIOLATIONS_{line}.csv; it no longer fails the run.
+  shelf_life_is_warning: true
+
+# --- NOT IMPLEMENTED FROM THE DOCUMENT, AND WHY ------------------------
+#  SS F "short-shelf lots capped by quantity - 0.5 of the shelf window for
+#  slitted, rubberized ply and cap strip, 1.0 for belt, apex and ply" needs a
+#  per-item-type quantity cap expressed as a fraction of the shelf window. No
+#  such knob exists and it is not a one-line change; it is left out and named
+#  here rather than silently skipped.
+#
+#  SS A1 "the plan workbooks in 30-09" - no such folder exists in this
+#  repository. The current plan-files/*9.xlsx are used.

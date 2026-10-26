@@ -1,0 +1,81 @@
+# =====================================================================
+#  rules_v32.yaml - v31 + THREE PLANT ASSUMPTIONS + NO MACHINE STAYS IDLE
+#
+#  Same October plan, same PPDS-only data (data-ppds-v32/, a copy of v31's
+#  data-ppds/ so v31 still reproduces), with:
+#
+#  1. OPENING WIP AT 22 OCT 07:00. v31 used the 22 Oct 08:54 sync, which holds
+#     material produced up to 06:29. The rows produced 06:29 -> 07:00 only
+#     appear in the 23 Oct 00:20 sync; they are added
+#     (stage_wip_ppds.py --top-up-sync ... --cut "2026-10-22 07:00:00").
+#
+#  2. MASTER COMPOUND IS ON HAND. Every BOM code typed MASTER COMPOUND is
+#     contracted out of the walk like a purchased item: no master-mixing lot is
+#     made and nothing waits on master mixing. Staged by
+#     `stage_purchased.py --types-only` from `purchased_item_types` below.
+#     This REPLACES v28's list - cap strip and edge gum are no longer purchased.
+#
+#  3. CAP STRIP AND EDGE GUM ON HAND FOR THE FIRST 8 HOURS ONLY (A-WIP-2).
+#     Each listed code gets exactly the demand of building lots that start
+#     before 22 Oct 15:00 as opening stock; everything after is made.
+#     Codes are the chains ASSUMPTIONS.MD names (I-2 cap strip, I-3 edge gum),
+#     under both the BOM's names and the routing's.
+#     KNOWN GAP: in CTP_Master_BOM the cap strip is `CAP 66` / `CAP30` /
+#     `GBCAP20`, while CTP_Master_Routing routes `CAP 66 - CAPSTRIP` <-
+#     `CAP 66- slitted material` <- `CAP 66-MOTHERROLL`. The BOM code has no
+#     routing row, so the engine cannot MAKE cap strip from PPDS data at all -
+#     after the first 8 h it is still passed through as available, as in v31.
+#
+#  4. NO MACHINE STAYS IDLE (phase 5, BTP v10's never-idle):
+#     never_idle_pull - an idle machine releases its own material-ready lots
+#                       before their campaign release time;
+#     work_stealing   - failing that, it takes the most urgent material-ready
+#                       lot queued on a BUSY machine its routing also allows.
+#     Only material that has arrived is ever taken. A machine no lot's routing
+#     names can still idle: there is nothing it may run.
+# =====================================================================
+inherit_from: rules_v31.yaml
+
+meta:
+  run: e2e_v32
+  goal: "WIP at 07:00, master compound on hand, cap strip/edge gum 8 h, never idle"
+  data: "data-ppds-v32/"
+
+purchased_item_types:
+  - "MASTER COMPOUND"
+
+assumptions:
+  first_hours_cover:
+    hours: 8
+    codes:
+      # cap strip chain (ASSUMPTIONS.MD I-2)
+      - "CAP 66"
+      - "CAP30"
+      - "GBCAP20"
+      - "CAP 66 - CAPSTRIP"
+      - "CAP30 - CAPSTRIP"
+      - "GBCAP20 - CAPSTRIP"
+      - "CAP 66- slitted material"
+      - "CAP30- slitted material"
+      - "GBCAP20- slitted material"
+      - "CAP 66-MOTHERROLL"
+      - "CAP30-MOTHERROLL"
+      - "GBCAP20-MOTHERROLL"
+      # edge gum chain (ASSUMPTIONS.MD I-3)
+      - "EG01"
+      - "EG02"
+      - "EG03"
+      - "BP01"
+      - "EGSL01"
+      - "EGSL02"
+      - "EGSL03"
+      - "TEG-01"
+      - "TEG-02"
+      - "TB WRAP B1144"
+      - "STC-WRAP"
+      - "GUM STRIP"
+
+dispatch:
+  never_idle_pull: true
+  work_stealing: true
+  idle_poll_h: 1

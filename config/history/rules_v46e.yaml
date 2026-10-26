@@ -1,0 +1,20 @@
+# =====================================================================
+#  rules_v46e.yaml - v46d + 4-ROLL CALENDER (901) LOTS IN WHOLE DIPS
+#  CTP_Master_FRC (staged as CTP_Master_FRC.csv) gives each 901 item its
+#  Spool/Dip Length. A 901 lot covers only the needs inside the item's shelf
+#  window (max - min ageing - 2 h):
+#    window need >= one dip -> the largest whole number of dips it uses up
+#    window need <  one dip -> a partial dip of exactly that need (>= MPQ)
+#  User decisions 2026-10-27: low-demand items get a partial dip sized to the
+#  shelf window (no dip run to expire); one run may cover up to the shelf
+#  window. Run frequency follows from dip / daily need.
+#  Items without a dip length (HTPOLY2000, NYLRAD, PLYTEC, ...) keep v46d sizing.
+#  Line speed stays from the routing only.
+# =====================================================================
+inherit_from: rules_v46d.yaml
+meta: {run: e2e_v46e, goal: "v46d + 901 lots in whole dips (CTP_Master_FRC), shelf-window cover", data: "data-ppds-v38-bomv2/"}
+fourrc_dip:
+  enabled: true
+  machines: ["901"]
+  frc_file: CTP_Master_FRC.csv
+  aliases: {MONOCHAFER: MONOCHAFFER}

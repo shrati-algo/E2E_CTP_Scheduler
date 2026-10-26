@@ -1,0 +1,48 @@
+# =====================================================================
+#  rules_v33.yaml - v32 + CUTTERS/SLITTERS BYPASSED + FINAL ON MASTER MIXERS
+#
+#  Everything in v32 is kept: opening WIP at 22 Oct 07:00, master compound on
+#  hand, cap strip / edge gum on hand for the first 8 h, no machine idle.
+#  Data: data-ppds-v33/ = v32's PPDS data with CTP_Master_BOM re-read after the
+#  plant's update (TBR compound recipes: +3,962 edges, 2,246 quantities changed).
+#
+#  1. CUTTERS AND SLITTERS ARE BYPASSED. Every item the routing makes in one of
+#     `bypass_departments` is taken out of the made set, so the BOM walk
+#     contracts it: its INPUTS attach straight to its consumer. Building takes
+#     the calendered roll / ply / compound directly, no lot is cut or slit, and
+#     the cutter and slitter machines carry no work. Quantities are per-tyre
+#     absolute along every path, so a bypassed node's inputs keep their own
+#     per-tyre figure. BR-5 (bias cutter output multiplies its children) still
+#     applies when the bias cutter itself is bypassed.
+#     Consequence: opening stock OF a bypassed code (cut belts, slitted
+#     material on the floor) has no demand to net against and is not used.
+#
+#  2. FINAL COMPOUND MAY ALSO RUN ON THE MASTER MIXERS. Machines still come
+#     from CTP_Master_Routing; every FINAL MIXING item additionally gets every
+#     machine the routing names for MASTER MIXING. With master compound on
+#     hand (v32) those mixers are otherwise empty. Mixer changeover stays the
+#     fixed 1 min (BR-74); no master mixer has a matrix row either way.
+#     The routing-legality check accepts these placements and says so.
+# =====================================================================
+inherit_from: rules_v32.yaml
+
+meta:
+  run: e2e_v33
+  goal: "v32 + cutters/slitters bypassed + final compound on master mixers"
+  data: "data-ppds-v33/"
+
+bypass_departments:
+  # PCR
+  - "CAP PLY SLITTER"
+  - "CUTTER"
+  - "CUTTING"
+  - "PLY CUTTER"
+  - "SLITTER"
+  # TBR
+  - "BELT CUTTER"
+  - "Bios cutter"
+  - "Chaffer Slitter"
+  - "TBR Body ply CUTTER"
+
+machines:
+  final_on_master_mixers: true

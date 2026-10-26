@@ -1,0 +1,23 @@
+# =====================================================================
+#  rules_v37.yaml - v36 with NO upstream head start, WIP at 22 Oct 06:30
+#
+#  1. engine.open_h: 0 (was 48 since v28). Upstream production starts at the
+#     plan start, 22 Oct 07:00 - nothing is produced on 20-21 Oct. Every tyre
+#     comes from the opening stock plus production inside the plan window.
+#  2. Master compound fully available - unchanged from v32 (purchased_item_types
+#     MASTER COMPOUND, inherited).
+#  3. Opening WIP = JK_CTP_PPDS.CTP_Opening_WIP, inventory_date 2026-10-22,
+#     shift A strike (material produced up to 06:29:27, loaded 08:54:43) -
+#     the 22 Oct 06:30 snapshot. v32-v36's 06:30 -> 07:00 top-up is NOT used.
+#     Final compound batches -> kg via the routing batch_size (stage_wip_ppds).
+#  Everything else as v36 (mixing rules, bypass, whole units, never idle ...).
+# =====================================================================
+inherit_from: rules_v36.yaml
+
+meta:
+  run: e2e_v37
+  goal: "v36 + open_h 0 + WIP snapshot 22 Oct 06:30"
+  data: "data-ppds-v37/"
+
+engine:
+  open_h: 0

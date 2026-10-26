@@ -1,0 +1,5 @@
+# v42c = v42b + cold start 6b: BOM self-references (CAP 66 -> CAP 66) are skipped
+inherit_from: rules_v42b.yaml
+meta: {run: e2e_v42c, goal: "v42b + BOM self-reference fix (B616M 24x)", data: "data-ppds-v38/"}
+bom:
+  skip_self_reference: true

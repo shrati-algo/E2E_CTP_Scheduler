@@ -1,0 +1,5 @@
+# v43f = v43c (bigger 901 lots over the shelf-life window) + progressive release
+inherit_from: rules_v43c.yaml
+meta: {run: e2e_v43f, goal: "v43 + bigger 901 lots + progressive release", data: "data-ppds-v38/"}
+campaign:
+  progressive_release: true

@@ -1,0 +1,23 @@
+# =====================================================================
+#  rules_v44a.yaml - v43g24 + TBR BEAD MACHINES QUEUE BY TROLLEY NEED
+#
+#  Routing: bead winding (op 170, TBWB..) and apexing (op 180, TBAPBD..) both
+#  run on 2403/2404/2405. Deadline-first queued winding ahead of apexing every
+#  time (2403 wound beads for its first 49 h while 17 of the 20 apexing lots
+#  deciding TBR day-1..3 trolleys queued behind it, with wound beads in stock).
+#  On these machines lots now queue by the build start of the trolley they
+#  ultimately serve, then by their own deadline. Winding still precedes the
+#  apexing that needs it (input readiness + apex <= wound gate).
+#  Machines: routing table only (TBWB004/TBWB008 have no routing machine -
+#  data gap, left on the flagged A01 assumption).
+# =====================================================================
+inherit_from: rules_v43g24.yaml
+
+meta:
+  run: e2e_v44a
+  goal: "v43g24 + bead machines queue by trolley need"
+  data: "data-ppds-v38/"
+
+dispatch:
+  trolley_need_bucket_h: 8
+  trolley_need_first_machines: ["2403", "2404", "2405"]

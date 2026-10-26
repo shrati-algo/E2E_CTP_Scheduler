@@ -1,0 +1,10 @@
+# v9 — every implementable business rule actually WIRED, and proved by
+# ctp_check_rules.py reading the schedule rather than the config.
+#
+# v8 claimed 17 rules applied. Measuring the output showed only 6 were: five
+# sequencing rules had functions that no phase ever called, and BRM-02's cap
+# was being overridden by BRM-01's floor. v9 fixes both and adds the checker.
+inherit_from: rules_v8.yaml
+meta:
+  run: e2e_v9
+  variant: "v8 assumptions + sequencing rules wired + rule checker"

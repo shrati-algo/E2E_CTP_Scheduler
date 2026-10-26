@@ -1,10 +1,14 @@
-# Plan folders
+# plans/ - input plan folders
 
-Put each plan in its own folder here (or anywhere), with exactly one each of the following:
+Each sub-folder is one planning input for `run_pipeline.py --plan-folder`. Files are
+found by name (case-insensitive):
 
-    ctp_curing_schedule_*_pcr*.xlsx     ctp_curing_schedule_*_tbr*.xlsx
-    ctp_building_schedule_*_pcr*.xlsx   ctp_building_schedule_*_tbr*.xlsx
+| file name contains | meaning | required |
+|---|---|---|
+| `building` and `pcr` | PCR building plan ("Shift Schedule" sheet) | yes |
+| `building` and `tbr` | TBR building plan | yes |
+| `curing` and `pcr` | PCR curing plan | no (derived if absent) |
+| `curing` and `tbr` | TBR curing plan | no (derived if absent) |
 
-Then run `python run_schedule.py --plans plans/<folder>`.
-
-Plant plans are **not** kept in this public repository. The reference runs used `plan-12oct` (PCR 13 / TBR 14; v2) and `plan-130ct` (PCR 14 / TBR 15; v3). The file format is in [../docs/INPUTS.md](../docs/INPUTS.md).
+`october_2026/` is the plan the v45b reference run used (`plan-latest` in the
+original project).

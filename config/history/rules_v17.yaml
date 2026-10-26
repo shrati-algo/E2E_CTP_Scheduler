@@ -1,0 +1,71 @@
+# =====================================================================
+#  rules_v17.yaml - FULL KIT, FORMED IN TIME
+#
+#  The kit GATE was never the problem: v16 ran 0 trolleys started before their
+#  kit and 0 incomplete kits, on both lines. What fails is TIMING - 12 of 20
+#  builder queues are headed by a trolley whose kit is late, and because every
+#  trolley occupies a whole shift slot, that head delay cascades to every
+#  trolley behind it (159 of 176 PCR delays and 149 of 157 TBR delays are
+#  builder-queue, not kit).
+#
+#  The blocking components are a handful, and their machines are idle:
+#      PCR  BRTTL SLT 24.8 h - TRD 2267 / 2158 / 1503   3.5-12.0 h
+#      TBR  B3-TBLT006 / 008 / 004                      7.3-12.8 h
+#      tread extruder 1002 at 34% - FRC 901 at 38% - belt cutter 802 at 30%
+#
+#  They are not short of capacity. They are AIMED TOO LATE, because the buffer
+#  lookup missed them: `need_by = build_start - min_aging - buffer`, and the
+#  buffer is an exact name match against jkt_buffer_master. The master names 18
+#  (PCR) / 19 (TBR) item types, the BOM names 30 / 38, and only 6 and 7 match
+#  by spelling. Everything else silently took 0 h - including every one of the
+#  queue-heading components above.
+#
+#  v17 FIXES THE LOOKUP, NOT THE NUMBERS. Every buffer hour still comes from
+#  jkt_buffer_master; the engine now resolves WHICH stated row a BOM name
+#  belongs to, from the database alone - by name, and where the names share
+#  nothing, by the item's own routing department and operation. Nothing is
+#  invented: a type the master does not reach still takes 0 h, and phase 1
+#  prints it as a gap with the reason.
+#
+#  See ctpio.load_buffer for the three steps (EXACT / NAME / CONTEXT) and the
+#  refusal rules. An earlier draft of this file carried hand-set hours in a
+#  `buffer_overrides` block; it is gone, and the engine no longer reads it.
+# =====================================================================
+inherit_from: rules_v16.yaml
+
+meta:
+  run: e2e_v17
+  goal: "full kit, formed before the planned build start"
+  buffer_source: "jkt_buffer_master_{line} only - resolved to BOM names from the database"
+
+# ---------------------------------------------------------------------
+#  What the database resolver reaches, and what it still does not
+# ---------------------------------------------------------------------
+#  PCR   NAME    Bead Apex, Bead Bundle, Capstrip Mother Roll, SideWall,
+#                Steel Belt, Steel Belt Edge Strip
+#        CONTEXT CALANDARED ROLL (FOUR ROLL CALENDAR -> 4 Roll Fabric/Wire,
+#                both 24 h), Edge Strip (CAP PLY CUTTER -> Cap strip),
+#                SLITTED MATERIAL + Slitted Material (CHAFFER SLITTER)
+#        0 h     Edge Gum, PRE CUT ROLL MATERIAL, Green Tyres (the anchor -
+#                correctly has no buffer of its own)
+#
+#  TBR   NAME    APEXED BEAD, BELT-1..4, BELT EDGE FILLER, Bead Bundle,
+#                Rubberized Ply, SideWall, Steel Belt Edge Strip
+#        CONTEXT BODYPLY, CALANDARED ROLL, NYLON-1, SLITTED MATERIAL,
+#                STEEL CHIPPER LEFT / RIGHT (BELT CUTTER -> Belt)
+#        0 h     PRE ASSEMBLY, PRE CUT ROLL MATERIAL, SQUEEGEE, NYLON2&3,
+#                Green Tyres
+#
+#  PRE ASSEMBLY is the one queue-head the master genuinely does not cover: no
+#  row of jkt_buffer_master_tbr names it or anything its routing (TBR PRE
+#  ASSEMBLY) touches. It stays at 0 h and is REPORTED, because the alternative
+#  is to make a number up. It needs a row in the plant's buffer master.
+
+# ---------------------------------------------------------------------
+#  buffer_aliases (inherited from rules_v15) - now a LAST RESORT
+# ---------------------------------------------------------------------
+#  The four hand-written carries - Side wall/SideWall, Appex Bead/APEXED BEAD,
+#  Belt/BELT-1..4, Bead/Bead Bundle - are all now derived from the database
+#  by the NAME step, so they fire on nothing. They are left in place as a
+#  manual escape hatch and are applied only where the inference found nothing;
+#  they too can only carry an hour figure the master already states.

@@ -1,0 +1,23 @@
+# =====================================================================
+#  rules_v38.yaml - v37 + GREEN-TYRE OPENING STOCK ACTUALLY USED
+#
+#  Same as v37: engine.open_h 0, opening WIP = PPDS 22 Oct 06:30 snapshot,
+#  master compound fully available, BOM unchanged (the 4 no-BOM SKUs stay
+#  unbuilt), all mixing rules, cutters/slitters bypassed.
+#
+#  Fix (phase7_curing.py, no rule knob): JK_CTP_PPDS.CTP_GT_Inventory keys
+#  stock by GT code, phase 7 looked it up by SKU code, so v31-v37 used none of
+#  it. GT stock (22 Oct) is now shared among the SKUs that build each GT,
+#  earliest curing slot first, expiring at plan start + the GT's max ageing.
+# =====================================================================
+inherit_from: rules_v37.yaml
+
+meta:
+  run: e2e_v38
+  goal: "v37 + GT opening stock used (keyed by GT code)"
+  data: "data-ppds-v38/"
+
+# GT stock = the SAME snapshot as the WIP: CTP_GT_Inventory 22 Oct shift A,
+# updated_at 2026-10-22 06:36:03 (PCR 5,892 / TBR 1,299 tyres). Staged with
+# CTP_GT_DATE=2026-10-22 CTP_GT_ASOF="2026-10-22 06:36:03.260" into
+# data-ppds-v38/. (The first staging summed the A+B+C snapshots of the day.)

@@ -1,0 +1,49 @@
+# =====================================================================
+#  rules_v34.yaml - v33 + WHOLE-UNIT LOTS + BYPASS TRANSFER TIME
+#
+#  Everything in v33 is kept (PPDS-only data in data-ppds-v33/, WIP at 07:00,
+#  master compound on hand, cap strip / edge gum first 8 h, never idle,
+#  cutters/slitters bypassed, final compound also on master mixers).
+#
+#  1. UNITS. A lot is a whole number of units (phase 3):
+#       KG      rounded UP to whole mixer batches of CTP_Master_Routing's own
+#               batch_size (batch_UNIT = KG) - e.g. 2,678 kg of HS108 at
+#               220 kg/batch becomes 13 batches = 2,860 kg.
+#       M, NOS  the routing carries NO batch for them, so they are rounded UP
+#               to the next whole metre / piece.
+#     Measured on v33: 560 of 672 PCR and 223 of 230 TBR mixing lots were not
+#     whole batches; 547 of 665 PCR and 526 of 544 TBR metre lots fractional.
+#
+#  2. TRANSFER TIME ACROSS A BYPASS. With cutters / slitters bypassed, the
+#     material still needs the rest those skipped components would have
+#     taken. The gap between a producer and its consumer across a bypass is
+#     the SUM of the MIN AGEING of every bypassed component in between (the
+#     longest such chain), added to the producer's own min ageing - so phase 1
+#     need-by, phase 4 CPM, phase 5 material-ready / kit gate and the
+#     validator's sequence check all charge it. Max ageing is not changed.
+# =====================================================================
+inherit_from: rules_v33.yaml
+
+meta:
+  run: e2e_v34
+  goal: "v33 + whole-unit lots + bypass transfer time = min ageing in between"
+  data: "data-ppds-v33/"
+
+lot_sizing:
+  whole_units: true
+
+bypass_transfer_from_min_aging: true
+
+# The BR-4 min ageing of the bypassed CUT components is what the transfer
+# time sums. CTP_Master_AGING gives 0 h for 349 of 357 PCR and all 116 TBR
+# bypassed codes, and BR-4 (aging_spec) is keyed on item type - but
+# CTP_Master_BOM renamed PCR's cut belts / plies, so BR-4 stopped matching.
+# The 28 Sep BOM typed exactly these codes as below; the alias is used for the
+# BR-4 lookup only. TBR's cut-component types did not change and BR-4 states
+# no rest for them, so they correctly stay at 0 h.
+aging_spec_type_alias:
+  "BELT1": "Steel Belt"           # 4 h min  (99 codes were Steel Belt)
+  "BELT2": "Steel Belt"           # 4 h min  (101 codes)
+  "PLY1": "Ply"                   # 4 h min  (83 codes were Ply)
+  "PLY2": "Ply"                   # 4 h min  (46 codes)
+  "FILLIPER": "SLITTED MATERIAL"  # 0 h      (2 codes)

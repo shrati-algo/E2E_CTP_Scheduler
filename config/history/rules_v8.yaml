@@ -1,0 +1,70 @@
+# v8 — graded virtual WIP (v10's make_virtual_wip) + the SNCT002 shelf-life
+# assumption, on top of the campaign build.
+inherit_from: rules_upstream_campaign.yaml
+meta:
+  run: e2e_v8
+  variant: "campaign + graded virtual WIP + SNCT002 shelf life assumed"
+
+# =====================================================================
+#  PER-ITEM AGING OVERRIDES — every one of these is an ASSUMPTION.
+# =====================================================================
+aging_overrides:
+  # ASSUMPTION A-AGE-1 (user instruction, 2026-09-26).
+  # jkplanning_CTP records SNCT002 with max aging 0 h. A zero shelf life is
+  # almost certainly a missing value rather than a real spec - nylon does not
+  # expire instantly - and while it stands at 0 the campaign is forbidden from
+  # pulling the item forward at all, which is why SNCT002 alone blocked 60 of
+  # 83 TBR building lots. Assumed 24 h pending the plant's real figure.
+  SNCT002:
+    min_h: 0
+    max_h: 24
+
+# =====================================================================
+#  VIRTUAL WIP — the graded opening cover, ported from v10.
+# =====================================================================
+virtual_wip:
+  enabled: true
+  # Tier 1: the first N tyres of the opening day get a FULL kit.
+  tier1_tyres: 6000
+  # Tier 2: the rest of day 1 gets semi-finished + mother rolls.
+  # Tier 3: day 2 onward gets MOTHER ROLLS only, so cutting/slitting is still
+  #         scheduled and the plan is not handed a solved problem.
+  tier3_days: 1
+
+  # COMPOUND IS NEVER INVENTED. v10 is explicit: "compound cover comes from the
+  # REAL snapshot in every tier". opening_wip already carries it.
+  never_synthesise:
+    - MASTER COMPOUND
+    - FINAL COMPOUND
+
+  semi_finished:
+    - Cap Strip
+    - Steel Belt
+    - Steel Belt Edge Strip
+    - Bead Bundle
+    - Bead Apex
+    - APEXED BEAD
+    - Tread
+    - TREAD
+    - Ply
+    - BODYPLY
+    - SideWall
+    - Inner Liner
+    - INNER LINER
+    - PRE CUT ROLL MATERIAL
+    - SLITTED MATERIAL
+    - Slitted Material
+    - Edge Gum
+    - Edge Strip
+    - BELT EDGE FILLER
+    - GUM STRIP
+    - SHOULDER PAD
+    - NYLON-1
+    - NYLON2&3
+    - PRE ASSEMBLY
+    - SQUEEGEE
+
+  mother_rolls:
+    - CALANDARED ROLL
+    - Capstrip Mother Roll
+    - Rubberized Ply

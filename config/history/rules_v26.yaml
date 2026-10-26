@@ -1,0 +1,37 @@
+# =====================================================================
+#  rules_v26.yaml - A 24-HOUR UPSTREAM RUNWAY
+#
+#  Identical to v25 in every other respect. One change:
+#
+#      open_h: 0  ->  24
+#
+#  Upstream may now start at 2026-09-28 07:00, a day before the building plan.
+#
+#  WHAT THAT ASSUMES, STATED PLAINLY
+#  The WIP is pinned to the 06:30 strike of 29 Sep. A runway lets the engine
+#  make components BEFORE that instant - and anything the plant really had made
+#  by then is already IN the snapshot. So a 24 h runway credits the plant with
+#  one day of upstream production twice: once as material the engine invents,
+#  and once as the opening floor that does not reflect it.
+#
+#  It is not therefore a free gain. It is a deliberate, bounded assumption that
+#  the plant was running its upstream a day ahead of the building plan, and the
+#  result must be read as "what this plan looks like IF that is true".
+#
+#  v21 measured the same knob from the other end on an earlier data set:
+#      open_h    0 h -> BOTH built  0.2%
+#      open_h   24 h ->             0.9%
+#      open_h   96 h ->            23.1%
+#      open_h  192 h ->            56.9%   (plateau)
+#  Those numbers were on PPDS-only WIP with no compound. With compound restored
+#  the curve starts far higher, so 24 h buys less than it did there.
+# =====================================================================
+inherit_from: rules_v25.yaml
+
+meta:
+  run: e2e_v26
+  goal: "v25, with one day of upstream runway"
+  assumption: "upstream ran 24 h ahead of the building plan; not visible in the 06:30 floor"
+
+engine:
+  open_h: 24

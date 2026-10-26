@@ -1,0 +1,30 @@
+# =====================================================================
+#  rules_v40.yaml - v39 + MOULD-CHANGE GAP ON PRESSES + CLEAN AUDIT TRAIL
+#
+#  Same data, plan and knobs as v39 (data-ppds-v38, plan-latest October).
+#  Code changes (v38_corrections/IMPLEMENTATION_PLAN.md steps 3 + 4):
+#   * phase7_curing.py: a pushed press lot no longer starts the instant the
+#     lot ahead ends. The gap is the plan's CO_Mins + Mould_Clean_Mins on the
+#     lot's row; if the SKU changes and the plan states none, assumption A05
+#     below applies (recorded in phase7_assumptions.csv / VALIDATION_REPORT).
+#   * phase3_lot_sizing.py: lot ids are line-prefixed (PCR_/TBR_) - 58 ids
+#     were duplicated across lines in v38/v39.
+#   * br_compliance_v15.py: BR-10 / BR-15 read the horizon, the WIP snapshot
+#     and PM coverage from the run instead of printing the e2e_v15 text.
+#   * make_validation_report.py: G3 (gap >= required changeover) and G4
+#     (unique lot ids) are now FATAL.
+# =====================================================================
+inherit_from: rules_v39.yaml
+
+meta:
+  run: e2e_v40
+  goal: "v39 + mould-change gap on presses + line-prefixed lot ids + live audit text"
+  data: "data-ppds-v38/"
+
+curing:
+  # A05 - ASSUMPTION, used only when the SKU changes on a press and the plan
+  # row states no CO_Mins / Mould_Clean_Mins. Replace with the plant's mould
+  # change time per press class when it is supplied.
+  mould_change_min:
+    pcr: 120
+    tbr: 180

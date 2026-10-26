@@ -1,0 +1,315 @@
+# =====================================================================
+#  rules_v15.yaml - the CTP end-to-end run governed by the plant's
+#  re-issued master rule book:
+#
+#      master-business-rules/Upstrean Business rules.xlsx
+#      sheet "Stock Business Rules" - 76 rules, BR-1 .. BR-77 (BR-6 is not
+#      in the file), across 8 sections.
+#
+#  This file SUPERSEDES the old 48-rule book (BRG/BRM/BRE/BRIL/BR4RC/BRC/BRB).
+#  The master book re-issues several rules that the old book marked "Need
+#  confirmation if applicable for CTP" as FIRM INSTRUCTIONS - BR-68..BR-74 are
+#  the old BRM-04..BRM-10. Those are no longer treated as pending: where CTP
+#  has the data they are implemented, and where it does not the reason is
+#  stated in BUSINESS_RULES_COMPLIANCE_v15 rather than left as a silent gap.
+#
+#  EVERY knob carries the BR id it comes from. A number in the schedule that
+#  cannot be traced back to a row of the plant's workbook does not belong here.
+#
+#  Inherits the whole v13 chain:
+#    rules_v13 -> rules_v11 -> rules_v10 -> rules_v9 -> rules_v8
+#      -> rules_upstream_campaign -> rules_upstream -> rules.yaml
+# =====================================================================
+inherit_from: rules_v13.yaml
+
+meta:
+  plant: CTP
+  source: "master-business-rules/Upstrean Business rules.xlsx - Stock Business Rules (76 rules, BR-1..BR-77)"
+  supersedes: "Upstream Business Rules.xlsx (48 rules) - see rules_upstream.yaml"
+  plan: "plan-files/ctp_building_schedule_September_2026_{pcr,tbr} (27 Sep - 01 Oct 2026)"
+  run: e2e_v15
+
+# =====================================================================
+#  MACHINE ELIGIBILITY - BR-4, BR-75, and the plant's instruction that
+#  every CTP machine carries work.
+# =====================================================================
+machines:
+  # ---- BR-4 "Assign items only to approved machine/equipment mappings.
+  #            Hard-block invalid machine-item combinations."
+  # ---- BR-75 "Use Plant-approved Allowable Machine Matrix."
+  #
+  # THE ROUTING'S MIXER NAMES ARE AMBIGUOUS AND THE AMBIGUITY WAS COSTING
+  # LEGALITY. `F270` names two different machines: F270 M (wc 101, a MASTER
+  # mixer) and F270 F (wc 102, a FINAL mixer). Resolved by spelling alone the
+  # token always answered 101, so FINAL MIXING work landed on a MASTER mixer
+  # and the real F270 F carried nothing. The department of the routing row
+  # disambiguates it, and this is the map.
+  department_aware_mixers: true
+  mixer_roles:
+    "MASTER MIXING":
+      "F270": "101"        # F270 M
+      "270M": "101"
+      "K270M": "101"
+      "F440": "103"        # F440 M
+      "440M": "103"
+      "K430-1": "105"      # K430-1 M
+      "430-1": "105"
+      "K430-2": "106"      # K430-2 M
+      "430-2": "106"
+    "FINAL MIXING":
+      "F270": "102"        # F270 F  <- the fix
+      "310": "104"         # K310 F
+      "K310": "104"
+
+  # ---- BR-4 fallback. Used ONLY where the routing states no machine at all.
+  # It never widens a machine list the routing does state.
+  #
+  # TBR BEAD WINDING: all 220 routing rows carry a blank `machines` cell and
+  # no other item in the department states one either, so there is no pool to
+  # fall back on. The plant register has no separate TBR bead winder - TBR
+  # bead winding and apexing both run on the three TDA machines - so those are
+  # the eligible machines. Recorded as assumption A01 on every item it fills.
+  department_register:
+    "BEAD WINDING": ["2403", "2404", "2405"]
+
+  # The plant asked for work on every CTP machine. This opens an idle-but-
+  # LEGAL machine before the balancer packs the busy ones. It selects only
+  # from the item's own eligible set, so legality is untouched.
+  spread_all_eligible: true
+
+# =====================================================================
+#  BR-10  PM / MTC downtime - now WIRED (it was a known blocker in v14)
+# =====================================================================
+downtime:
+  # "Exclude PM/Cutter Shear change engineering downtime from available
+  #  minutes. Do not schedule inside blocked time."
+  enabled: true
+  source: "jkplanning_CTP.pm_mtc_downtime_schedule (76 rows)"
+  rule_id: BR-10
+  # The table carries plan_month 2026-09 only and its last block ends
+  # 2026-09-29 23:00. The plan horizon runs to 2026-10-01 06:59, so the last
+  # ~31 hours have NO PM data. Machines are treated as available there and the
+  # assumption is recorded (A-PM-1) rather than presented as a clean calendar.
+  assume_available_after: "2026-09-29 23:00"
+
+# =====================================================================
+#  MIXING - BR-68 .. BR-77
+# =====================================================================
+mixing:
+  # ---- BR-77 "Always produce +5 extra batches to cover technical hold and
+  #             quality issues."  (was BRM-13)
+  buffer_batches: 5
+  buffer_excludes_special: true
+  rule_id_buffer: BR-77
+
+  # ---- BR-74 "Mixing department transitions shall always incur a fixed
+  #             2-minute changeover."  (was BRM-10, previously NOT APPLIED)
+  # CTP's changeover matrix prices no mixer at all, so every mixer transition
+  # cost 0 minutes up to v14. The master book states the rule firmly, so v15
+  # charges it.
+  #
+  # SUPERSEDED BY PLANT DATA, 2026-09-28: the book says 2 minutes; the plant
+  # states 60 SECONDS on both master and final mixers. The live value is
+  # `changeover.mixing_fixed_min` below - this block is documentation only and
+  # no longer carries a number, because two keys holding the same figure is how
+  # the wrong one gets edited.
+  rule_id_changeover: BR-74
+  changeover_superseded_by: "changeover.mixing_fixed_min (60 s, plant data)"
+
+  # ---- BR-73 "Same Compound should not be scheduled multiple times in a
+  #             shift."  (was BRM-09)
+  once_per_shift: true
+  rule_id_once_per_shift: BR-73
+
+  # ---- BR-71 "Related compounds together: make related compounds
+  #             continuously, e.g. IL3 and IL5 together."  (was BRM-07)
+  related_groups:
+    - ["IL3", "IL5"]
+  related_together: true
+  rule_id_related: BR-71
+
+  # ---- BR-72 "Master Compound Sequencing - if a master compound has two
+  #             corresponding final compounds, both final compounds should be
+  #             scheduled consecutively."  (was BRM-08)
+  finals_consecutive: true
+  rule_id_finals: BR-72
+
+  # ---- BR-70 "Master and final compound on same machine: TR100 compound must
+  #             be added as cleanout between them."  (was BRM-06)
+  # Kept ON so the engine TESTS the precondition every run and says whether it
+  # ever held. See the compliance report: TR100 does not exist anywhere in the
+  # CTP routing, and after the BR-4 mixer fix master and final mixers are
+  # physically disjoint sets, so the precondition cannot arise.
+  cleanout:
+    enabled: true
+    compound: TR100
+    minutes: 0
+    rule_id: BR-70
+
+  # ---- BR-69 "ML405 / ML406 followed by MK3."  (was BRM-05)
+  # Precondition present (ML405 is produced on PCR); the required successor
+  # MK3 is not a CTP item. Left declared so the check measures and reports it.
+  follow_with:
+    ML405: MK3
+    ML406: MK3
+  rule_id_follow: BR-69
+
+  # ---- BR-68 "K4 before/after IL compound: Banbury K4 sequencing must
+  #             consider before and after IL compound production."  (BRM-04)
+  # CTP has no mixer called K4. Which of F270/F440/K430-1/K430-2/K310 the
+  # plant means is not derivable from any master, so the rule is declared with
+  # no machine and the compliance report asks for the mapping.
+  k4:
+    enabled: true
+    machine: ""                # <- plant to confirm
+    il_compounds: ["IL3", "IL5"]
+    rule_id: BR-68
+
+  # carried forward, unchanged by the master book
+  mpq_batches: 5
+  sticky_stack_batches: 3
+  sticky_compounds: [JT444, JT466]
+
+# =====================================================================
+#  GENERAL - BR-1 .. BR-17
+# =====================================================================
+general:
+  # BR-14 "No change overs in the first and last 30 min of shift
+  #        (handover and take over activities)."
+  changeover_blackout_min: 30
+  rule_id_blackout: BR-14
+
+  # BR-2 "Use shift-start opening inventory. Schedule only the net stock
+  #       requirement."   - phase 2 WIP netting
+  # BR-12 "Respect plant-approved minimum/maximum ageing limits. Hard-block."
+  # BR-17 "Use latest plant-approved Master Data."
+  aging_source: jkt_aging_master
+  mpq_source: jkt_mpq
+
+  # BR-16 "When urgency is similar, prefer lower-changeover sequences and
+  #        longer continuous runs."
+  prefer_continuity: true
+  rule_id_continuity: BR-16
+
+# BR-7 "Use Previous Item -> Next Item machine-specific changeover time. Do not
+#       use fixed setup time where a matrix exists."
+# The matrix is authoritative; BR-74's 2 minutes applies ONLY to mixing, which
+# the matrix does not price at all, so the two do not conflict.
+changeover:
+  source_policy: matrix_only
+  unpriced_min: 0
+  # ---- BR-74, as the PLANT states it -------------------------------------
+  # 60 seconds on every mixing transition, MASTER and FINAL alike.
+  #
+  # Minutes, because the engine is minutes throughout (`changeover_min`,
+  # `Timedelta(minutes=...)`). 60 s is exactly 1.0, so there is no rounding.
+  #
+  # THIS IS THE ONLY LIVE KNOB FOR MIXER CHANGEOVER. `co_min()` in
+  # phase5_placement.py applies it to any department whose name contains
+  # MIXING, which on CTP is exactly MASTER MIXING and FINAL MIXING - so the
+  # two roles need no separate entries while they share a rate. To split them
+  # later, replace this scalar with a per-department map and key it on the `d`
+  # argument co_min() already receives.
+  #
+  # It DEPARTS from the master rule book, which states 2 minutes. That is
+  # deliberate and is reported as a supersession, not as conformance.
+  mixing_fixed_min: 1          # BR-74 (plant override: 60 s, book says 2 min)
+  blackout_min: 30             # BR-14
+
+# =====================================================================
+#  CUTTERS & SLITTERS - BR-49 .. BR-57
+# =====================================================================
+cutters:
+  belts_together: true         # BR-50 "Belt-1 and Belt-2 of the same SKU together"
+  rule_id_belts: BR-50
+  once_per_shift: true         # BR-56 "Consolidate same item/setup family into one block per shift"
+  rule_id_once: BR-56
+
+# =====================================================================
+#  EXTRUSION - BR-18 .. BR-36   /   IL-CALENDERING - BR-37 .. BR-41
+# =====================================================================
+extrusion:
+  rolling_horizon_h: 24        # BR-37 (and the old BRE-01)
+  rolling_applies_to: [SideWall, Tread]
+  group_by_compound: true      # BR-21, BR-25, BR-32 - family batching
+  rule_id_group: BR-21/BR-25/BR-32
+
+il_calendering:
+  rolling_horizon_h: 24        # BR-37
+  rolling_applies_to: [Inner Liner]
+  group_by_compound: true      # BR-41 "sequence same/compatible compounds together"
+  rule_id_group: BR-41
+
+# =====================================================================
+#  4RC - BR-42 .. BR-48
+# =====================================================================
+frc:
+  ramp_up_min: 2
+  ramp_down_min: 3
+  creel_setup_min: 240         # BR-47 "creel setup is parallel, not a serial changeover"
+  creel_setup_parallel: true
+  creel_setup_is_changeover: false
+  rule_id_creel: BR-47
+  cap66_cleanout_min: 15       # BR-45 "cleanout/changeover logic before and after CAP66"
+  cap66_items: ["CAP 66- slitted material", "CAP 66 - CAPSTRIP", CAP66]
+  rule_id_cap66: BR-45
+  min_roll_m: 200              # BR-48 "respect approved min/max roll lengths"
+  min_roll_items: [Nychaffer, TLChaffer, Nylfiller, WPJ011]
+  rule_id_min_roll: BR-48
+  wire_to_wire_gap_h: 6
+
+# =====================================================================
+#  BEAD - BR-58 .. BR-65
+# =====================================================================
+bead:
+  winding_leads_apexing: true  # carried from v13, and it is BR-66's feed logic
+  # BR-64 "20in <-> 22.5in bead winding changeover: ~20 min."
+  tbr_inch_changeover_min: 20
+  rule_id_inch: BR-64
+  # BR-63 "TBR bead winding: follow inch-specific approved mapping. Do not
+  #        cross-assign 20in and 22.5in unless allowed."
+  # The inch is recoverable from the TBR bead item's own description, so the
+  # inch family IS derivable even though there is no bead master.
+  tbr_inch_from_description: true
+  rule_id_inch_map: BR-63
+  group_by_rounds: false       # BR-61/BR-65 need attributes CTP does not carry
+  group_by_wire_type: false
+
+# =====================================================================
+#  BUFFER MASTER -> BOM NAME ALIASES   (BR-12 lead time, BR-17 master data)
+#
+#  THE TWO SIDES USE DIFFERENT WORDS FOR THE SAME MATERIAL.
+#  `jkt_buffer_master_{line}` is keyed on the plant's own shorthand; the engine
+#  looks the buffer up on the BOM's `child_description`. Measured on this data,
+#  only 6 of 18 PCR terms and 5 of 19 TBR terms match at all - so a material the
+#  plant DID state a buffer for silently took 0 h, and `need_by` collapsed to
+#  `build_start - min_aging` with no margin left.
+#
+#  Every one of the 13 materials that arrived late with ZERO margin in e2e_v15
+#  (9 PCR bead apexes on 201/202, 4 TBR pre-assemblies on 2201) sat in that gap.
+#
+#  This maps the master's term onto the BOM's term(s). It does NOT invent a
+#  buffer: each alias inherits the hours the plant already stated, and an alias
+#  never overwrites a term the master states directly.
+#
+#  THE DATABASE IS NOT TOUCHED. Correcting `jkt_buffer_master` at source would
+#  make this block unnecessary - until then the translation lives here, where it
+#  is visible, rather than in code.
+buffer_aliases:
+  "Side wall":  ["SideWall"]                                  # 8 h PCR / 32 h TBR
+  "Appex Bead": ["Bead Apex", "APEXED BEAD"]                   # 8 h / 10 h
+  "Belt":       ["Steel Belt", "BELT-1", "BELT-2",
+                 "BELT-3", "BELT-4"]                           # 5 h / 12 h
+  "Bead":       ["Bead Bundle"]                                # 16 h / 10 h
+
+# =====================================================================
+#  PRE ASSEMBLY - BR-66, BR-67
+# =====================================================================
+building:
+  require_full_kit: true       # BR-66 / BR-67 - release only on a complete kit
+  report_incomplete_components: true
+  rule_id_kit: BR-66/BR-67
+
+curing:
+  even_lots: true
+  round: down

@@ -1,0 +1,41 @@
+# =====================================================================
+#  rules_v29.yaml - ASSUMPTIONS TAKEN AGAINST THE DATA BLOCKERS
+#
+#  v28 ended with 178 blockers. Most name a gap the plant has to close, but two
+#  classes were being answered SILENTLY with a zero - and a zero is itself an
+#  assumption: the optimistic one in the first case, the pessimistic one in the
+#  second. v29 replaces both with a stated, bounded, reversible assumption and
+#  prices each in DATA_BLOCKERS.csv.
+#
+#  Nothing else about v28 changes.
+# =====================================================================
+inherit_from: rules_v28.yaml
+
+meta:
+  run: e2e_v29
+  goal: "name the assumption instead of defaulting to zero"
+
+assumptions:
+  # --- A-BUF-1 : a missing buffer row is not a zero --------------------
+  # 13 item types have no row in CTP_Master_Buffer and were taking 0 h, which
+  # asserts the plant wants them ready at the very hour they are consumed. A
+  # missing row means "not specified", not "no buffer" - and zero is the
+  # OPTIMISTIC reading, which is why several of these types head a builder
+  # queue. Substitute the MEDIAN buffer this line's master does state, so an
+  # unspecified item is treated like a typical one rather than an urgent one.
+  #   PCR: Edge Gum, PRE CUT ROLL MATERIAL, Misc., Tube Valves & Acce.
+  #   TBR: PRE ASSEMBLY, SQUEEGEE, NYLON2&3, PRE CUT ROLL MATERIAL, Cap strip,
+  #        Master/Final Compound Silica
+  #   Green Tyres is excluded - it is the build anchor and correctly has none.
+  buffer_median_for_missing: true
+
+  # --- A-WIP-1 : an absent item type is not a zero ---------------------
+  # 64 item types have NO ROW AT ALL in the opening feed. That is not the same
+  # as the plant holding none, and the engine cannot tell them apart - but TBR
+  # MASTER COMPOUND has 2.39M units of demand and not one row, which is far
+  # more likely an incomplete feed than an empty floor. Grant an absent type
+  # this many hours of its OWN consumption rate as opening stock, dated at the
+  # bell and matured immediately. 0 turns it off and restores v28 exactly.
+  #
+  # 24 h is deliberately modest: one plant day of cover, not a pipeline fill.
+  absent_type_cover_h: 24

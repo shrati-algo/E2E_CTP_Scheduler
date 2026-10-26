@@ -1,0 +1,21 @@
+# =====================================================================
+#  rules_v43c.yaml - v43 (= v43b) + BIGGER LOTS ON THE 4-ROLL CALENDER 901
+#
+#  901 makes 19 items but ran 152 lots (median 0.64 h, 144 item changes):
+#  phase 3 broke each item's buckets on every 8 h need gap and cut them again
+#  on a 24 h need span. With campaign.bigger_lots, an item on a campaign
+#  machine is bucketed over its whole shelf-life window (max - min aging -
+#  2 h), so a lot is never used after it expires. MPQ floor/ceiling, the A03
+#  8 h run-length cap and whole-unit rounding still apply.
+#  Line speed: routing proc_time only (unchanged).
+# =====================================================================
+inherit_from: rules_v43b.yaml
+
+meta:
+  run: e2e_v43c
+  goal: "v43 + bigger lots on 901 (shelf-life window)"
+  data: "data-ppds-v38/"
+
+campaign:
+  bigger_lots: true
+  lot_window_h: 0        # 0 = the item's own shelf-life window only

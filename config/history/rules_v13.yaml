@@ -1,0 +1,35 @@
+# v13 — plant-instructed rules on top of the PPDS data pipeline.
+#
+# WHAT IS NEW, ALL THREE FROM THE PLANT
+#   1. BEAD WINDING LEADS BEAD APEXING. The BOM already forces each apex lot
+#      behind its own feeder, but that lets the two departments run neck and
+#      neck in aggregate - which is what was flagged on the TBR schedule. v13
+#      enforces the CUMULATIVE curve: total apexed may never exceed total wound.
+#   2. CURING LOTS ARE EVEN. A press cures in pairs (LHS/RHS mould halves), so
+#      an odd press quantity cannot be run. Rounded DOWN - rounding up would
+#      cure a tyre that was never built and break the cumulative GT gate.
+#   3. KIT COMPLETENESS IS REPORTED PER TROLLEY, in a 16th schedule column,
+#      naming the components that were not ready together.
+#
+# Everything else is inherited: no virtual WIP (not a BTP run step), campaign
+# release schedule, kit-ready dispatch, allowable-matrix rebalancing.
+inherit_from: rules_v11.yaml
+
+bead:
+  # cumulative wound >= cumulative apexed, enforced in phase 5
+  winding_leads_apexing: true
+
+curing:
+  # press lots must be even; DOWN only
+  even_lots: true
+  round: down
+
+building:
+  # already true; restated so the plant rule is visible in the rule file
+  require_full_kit: true
+  report_incomplete_components: true
+
+targets:
+  # what the plant is aiming at, used by the coverage report - NOT a constraint
+  cured_per_day_pcr: 13500
+  cured_per_day_tbr: 3500

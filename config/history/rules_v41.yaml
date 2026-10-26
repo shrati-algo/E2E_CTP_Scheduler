@@ -1,0 +1,15 @@
+# =====================================================================
+#  rules_v41.yaml - v40 + GREEN-TYRE STOCK FOUND BY THE CURING PLAN'S GT CODE
+#
+#  Code change (phase7_curing.py, no rule knob): an SKU the curing plan cures
+#  but the building plan never builds now finds its GT stock through the
+#  curing plan's GT_Code. Building/curing GT conflicts keep the building GT
+#  and are recorded as A11. Stock cured for DATA_BLOCKED SKUs is listed in
+#  VALIDATION_REPORT but not counted. (IMPLEMENTATION_PLAN.md step 5)
+# =====================================================================
+inherit_from: rules_v40.yaml
+
+meta:
+  run: e2e_v41
+  goal: "v40 + GT stock by curing GT code"
+  data: "data-ppds-v38/"

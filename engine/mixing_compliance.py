@@ -1,205 +1,253 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""mixing_compliance.py -- mixing-rule compliance of a finished run, as followed / occurrences (2026-10-05).
+"""mixing_compliance.py - every MIXING_RULES_README.md rule, measured FROM the
+written schedule (outputs/<run>/{pcr,tbr}/phase5_schedule.csv).
 
-    python mixing_compliance.py <run_output_dir> [<run_output_dir> ...] [--xlsx out.xlsx]
+    python mixing_compliance.py --run e2e_v36
 
-Counts every occurrence of each measurable mixing rule on the run's FINAL schedule
-(phase5_schedule_updated.csv / phase5_floor_schedule_updated.csv). Rules that are settings rather
-than per-lot events (BRM-12, BRM-13), not modelled (BRM-04, BRM-08) or not applicable (BRM-05 when
-there is no MK3 demand) are listed but kept out of the percentage.
+Writes outputs/<run>/MIXING_RULE_COMPLIANCE.csv (one row per rule: followed,
+occurrences, %, detail) and MIXING_RULE_EVIDENCE.csv (the lots behind every
+failure). Nothing is recomputed from the planner's own state - a rule the
+schedule does not show being followed is reported as not followed.
 """
-import os
-import sys
+from __future__ import annotations
+
+import argparse
+from collections import defaultdict
 
 import pandas as pd
-import yaml
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
-
-
-def _shift(t):
-    h = t - pd.Timedelta(hours=7)
-    return f"{h.normalize():%d-%b}-{'ABC'[int((h - h.normalize()).total_seconds() // 28800)]}"
+import ctpio as io
+import rules as R
+import mix_planner as MP
 
 
-def measure(run):
-    cfg = yaml.safe_load(open(os.path.join(HERE, "config.yaml"), encoding="utf-8"))
-    br = cfg.get("business_rules") or {}
-    mixers = {str(x) for x in (br.get("mixers") or [])}
-    S = pd.read_csv(os.path.join(run, "phase5_schedule_updated.csv"),
-                    parse_dates=["scheduled_start", "scheduled_finish"]).drop_duplicates("lot_id")
-    S["machine"] = S["machine"].astype(str).str.strip()
-    S["item"] = S["item"].astype(str).str.strip()
-    mx = S[S["machine"].isin(mixers)].sort_values(["machine", "scheduled_start"]).copy()
-    fs = pd.read_csv(os.path.join(run, "phase5_floor_schedule_updated.csv"), low_memory=False)
-    fs["machine"] = fs["machine"].astype(str).str.strip()
-    fm = fs[fs["machine"].isin(mixers)]
-    lots_b = fm.groupby("lot_id")["batches"].sum()
-    itype = dict(zip(fm["lot_id"], fm["item_type"].astype(str).str.upper()))
-    mx["itype"] = mx["lot_id"].map(itype).fillna("")
-    mx["batches"] = mx["lot_id"].map(lots_b)
-    rows = []
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--run", required=True)
+    ap.add_argument("--line", default="")      # accepted for run_all symmetry
+    a = ap.parse_args()
+    OUT = io.OUT_ROOT / a.run
+    cfg = R.rule("mix_planner") or {}
 
-    def add(rule, what, occ, ok, note=""):
-        rows.append({"rule": rule, "occurrence": what, "occurrences": int(occ), "followed": int(ok),
-                     "violations": int(occ - ok), "compliance_%": round(100.0 * ok / occ, 2) if occ else None,
-                     "note": note})
+    S = []
+    meta, itypes = {}, {}
+    for ln in ("pcr", "tbr"):
+        f = OUT / ln / "phase5_schedule.csv"
+        if not f.exists():
+            continue
+        d = pd.read_csv(f, parse_dates=["start", "finish"])
+        d["line"] = ln
+        S.append(d)
+        mt = io.build_routing_meta(io.load_routing(ln), io.machine_alias(io.load_machines()))
+        for k, v in mt.items():
+            meta.setdefault(k, v)
+        b = io.load_bom(ln)
+        itypes.update(io.load_itemtypes(b))
+    S = pd.concat(S, ignore_index=True)
+    S["machine"] = S["machine"].astype(str)
+    S["item_type"] = S["item_type"].fillna(S["item_code"].map(itypes))
+    mx = S[S["department"].astype(str).str.upper().str.contains("MIXING")
+           & S["start"].notna()].copy().sort_values(["machine", "start"])
+    U = lambda x: str(x or "").strip().upper()
 
-    b = pd.to_numeric(fm["batches"], errors="coerce")
-    add("BR-V1", "mixer shift row in whole batches", b.notna().sum(), ((b - b.round()).abs() < 1e-6).sum())
-    lb = mx["batches"].dropna()
-    add("BRM-01", "mixing lot >= 5 batches (MPQ)", len(lb), (lb >= 5 - 1e-6).sum())
-    st = mx[mx["item"].isin([str(x) for x in (br.get("sticky_compounds") or [])])]["batches"].dropna()
-    k = int(br.get("sticky_stack_batches", 3))
-    add("BRM-02", f"sticky lot in stacks of {k} batches", len(st), ((st % k).abs() < 1e-6).sum())
+    planner = MP.MixPlanner(cfg, {}, {
+        "itype_of": lambda it: itypes.get(it, "") or
+        str(mx.loc[mx["item_code"] == it, "item_type"].head(1).squeeze() or ""),
+        "fourrc_compounds": []})
+    rows, ev = [], []
 
-    # transitions on each mixer
-    co_min = float(cfg.get("mixer_changeover_min", 1))
-    tr_ok = float(br.get("master_final_cleanout_min", 5)) + co_min - 0.5
-    n_chg = n_chg_ok = n_mf = n_mf_ok = 0
+    def add(rule, code, ok, n, detail="", bad=None):
+        rows.append({"rule": rule, "code": code, "followed": int(ok), "occurrences": int(n),
+                     "pct": round(100.0 * ok / n, 1) if n else None, "detail": detail})
+        if bad is not None and len(bad):
+            b = bad.copy()
+            b.insert(0, "rule", rule)
+            ev.append(b)
+
+    cols = ["line", "lot_id", "item_code", "item_type", "machine", "machine_name",
+            "lot_qty", "batches", "start", "finish", "mix_plan"]
+    cols = [c for c in cols if c in mx.columns]
+
+    # ---- s.3 lots -------------------------------------------------------
+    bs = mx["item_code"].map(lambda i: (meta.get(i) or {}).get("batch_size"))
+    nb = mx["lot_qty"] / bs
+    whole = (nb - nb.round()).abs() < 1e-6
+    add("Output in whole batches", "BR-V1", int(whole.sum()), int(bs.notna().sum()),
+        "lot kg / routing batch_size is an integer", mx[bs.notna() & ~whole][cols])
+    mn = int((R.engine("mix_mpq_batches", 5)))
+    sticky = {U(x) for x in (R.rule("mixing.sticky_compounds") or [])}
+    real = mx[mx.get("mix_plan", "") != "prep"]
+    big = (real["batches"] >= mn) | real["item_code"].map(U).isin(sticky)
+    add(f"Lot >= {mn} batches", "BRM-01", int(big.sum()), len(real),
+        "sticky compounds are exempt (capped at 3)", real[~big][cols])
+    st = mx[mx["item_code"].map(U).isin(sticky)]
+    add("Sticky stack <= 3 batches", "BRM-02", int((st["batches"] <= 3).sum()), len(st),
+        ", ".join(sorted(sticky)), st[st["batches"] > 3][cols])
+
+    # ---- s.2 mixers ---------------------------------------------------------
+    masters = {m for v in meta.values() if U(v.get("department")) == "MASTER MIXING"
+               for m in v.get("machines", [])}
+    allowed = []
+    for r in mx.itertuples(index=False):
+        ms = set((meta.get(r.item_code) or {}).get("machines", []))
+        if "FINAL" in U(r.item_type) and io.final_on_master_mixers():
+            ms |= masters
+        allowed.append(r.machine in ms if ms else True)
+    allowed = pd.Series(allowed, index=mx.index)
+    add("Allowed mixer (routing + finals on master mixers)", "BRM-11",
+        int(allowed.sum()), len(mx), "", mx[~allowed][cols])
+    bought = {U(x) for x in (R.rule("purchased_codes") or [])}
+    mixed_bought = mx[mx["item_code"].map(U).isin(bought)]
+    add("Bought-in compounds never mixed", "s.2", int(len(mixed_bought) == 0), 1,
+        f"{len(mixed_bought)} lot(s) of {', '.join(sorted(bought))}", mixed_bought[cols])
+
+    # ---- s.4 one mixer per day, repeat gap ---------------------------------
+    mx["pday"] = mx["start"].map(io.plant_day)
+    per = mx.groupby(["item_code", "pday"])["machine"].nunique()
+    add("One mixer per compound per plant day", "s.4", int((per == 1).sum()), len(per),
+        "", None)
+    # runs = consecutive lots of one compound on one mixer, back to back
+    runs = []
     for m, g in mx.groupby("machine"):
-        r = list(g.sort_values("scheduled_start").itertuples())
-        for a, c in zip(r, r[1:]):
-            if a.item == c.item:
-                continue
-            gap = (c.scheduled_start - a.scheduled_finish).total_seconds() / 60
-            n_chg += 1
-            n_chg_ok += gap >= co_min - 0.1
-            if {a.itype, c.itype} == {"MASTER COMPOUND", "FINAL COMPOUND"} and str(br.get("master_final_cleanout_item", "TR100")) not in (a.item, c.item):
-                n_mf += 1
-                n_mf_ok += gap >= tr_ok
-    add("BRM-10", f"compound change on a mixer, gap >= {co_min:g} min", n_chg, n_chg_ok)
-    add("BRM-06", "master<->final switch with TR100 clean-out", n_mf, n_mf_ok,
-        f"gap >= {tr_ok + 0.5:g} min ({co_min:g} min changeover + {br.get('master_final_cleanout_min', 5)} min TR100)")
-
-    # BRM-03 / BR-V2 from the run's audit (same rule engine as the scheduler)
-    au = pd.read_csv(os.path.join(run, "BUSINESS_RULE_AUDIT.csv"))
-    a3 = au[au["rule_id"].astype(str).str.contains("BRM-03")]
-    if len(a3):
-        import re
-        txt = str(a3["measured"].iloc[0])
-        n = int(re.search(r"(\d+) transitions", txt).group(1))
-        short = int(re.search(r"(\d+) clean-outs shorter", txt).group(1))
-        add("BRM-03 / BR-V2", "transition at a butyl / protected compound", n, n - short,
-            "in sequence, or clean-out >= required (final 120 s; master: changeover only)")
-
-    # BR-V2 strict (v29): every run of a final-mixer target starts right after a prep compound (B1/B2/B99) or
-    # its family (IL3 <-> IL5) -- a clean-out alone does NOT count here
-    bsr = br.get("butyl_sequence_rule") or {}
-    fin = bsr.get("final") or {}
-    tg = [str(x) for x in (fin.get("targets") or ["30G", "IL3", "IL5"])]
-    pp = set(str(x) for x in (fin.get("prep") or ["B1", "B2", "B99"]))
-    fam = set(str(x) for x in (fin.get("family") or []))
-    # v61 (user 2026-10-10, as the plant): friendly in front of the butyl BLOCK -- butyl compounds may follow each other
-    _blk = str((cfg.get("butyl_day_block") or {}).get("friendly_mode", "each")).lower() == "block"
-    for t_ in tg:
-        n_ = ok_ = 0
-        for m, g in mx.groupby("machine"):
-            r = list(g.sort_values("scheduled_start").itertuples())
-            for k in range(1, len(r)):
-                a, c = r[k - 1], r[k]
-                if c.item == t_ and a.item != t_:
-                    n_ += 1
-                    ok = (a.item in pp) or (a.item in fam and t_ in fam)
-                    if not ok and _blk and a.item in tg:
-                        j = k - 1
-                        while j >= 0 and r[j].item in tg:
-                            j -= 1
-                        ok = j >= 0 and r[j].item in pp
-                    ok_ += ok
-        if n_:
-            add("BR-V2 prep in front", f"{t_} run starts right after B1/B2/B99" + (" or its IL family" if t_ in fam else "")
-                + (" (or inside a butyl block that starts right after B1/B2/B99)" if _blk else ""), n_, ok_)
-
-    # BRM-09: (mixer, shift, compound) in one continuous run
-    mx["shift"] = mx["scheduled_start"].map(_shift)
-    n9 = ok9 = 0
-    for (m, s), g in mx.groupby(["machine", "shift"]):
-        seq = list(g.sort_values("scheduled_start")["item"])
-        runs = [seq[0]] + [y for x, y in zip(seq, seq[1:]) if y != x]
-        for it in set(runs):
-            n9 += 1
-            ok9 += runs.count(it) == 1
-    add("BRM-09", "(mixer, shift, compound) as one run", n9, ok9)
-
-    # BRM-11: mixer allowed in the routing
-    rt = pd.read_csv(os.path.join(run, "PHASEWISE", "00_INPUTS", "routing.csv"), dtype=str) \
-        if os.path.exists(os.path.join(run, "PHASEWISE", "00_INPUTS", "routing.csv")) \
-        else pd.read_csv(os.path.join(HERE, "inputs", "routing.csv"), dtype=str)
-    allow = {}
-    for p, ms in zip(rt["routed_product"].astype(str).str.strip(), rt["machines"].astype(str)):
-        allow.setdefault(p, set()).update(x.strip().strip('"').strip("'").strip()
-                                          for x in ms.replace(";", ",").split(",") if x.strip().strip('"'))
-    ok11 = sum(1 for it, m in zip(mx["item"], mx["machine"]) if m in allow.get(it, set()))
-    add("BRM-11", "mixing lot on a plant-allowed mixer", len(mx), ok11)
-
-    # 3.1.3 / BRM-07: IL campaigns per plant day (07:00 -> 07:00) and B99 in front
-    ilc = cfg.get("il_daily_campaign") or {}
-    ili = {str(x) for x in (ilc.get("items") or ["IL3", "IL5"])}
-    prep = str(ilc.get("prep", "B99"))
-    camps = []
-    for m, g in mx.groupby("machine"):
-        r = list(g.sort_values("scheduled_start").itertuples())
-        i = 0
-        while i < len(r):
-            if r[i].item in ili:
-                j = i
-                while j + 1 < len(r) and r[j + 1].item in ili:
-                    j += 1
-                k = i - 1
-                if _blk:                                    # v61: walk back over the butyl block to its friendly
-                    while k >= 0 and r[k].item in set(tg):
-                        k -= 1
-                camps.append(((r[i].scheduled_start - pd.Timedelta(hours=7)).normalize(),
-                              r[k].item if k >= 0 else ""))
-                i = j + 1
+        g = g.sort_values("start")
+        cur = None
+        for r in g.itertuples(index=False):
+            if cur and cur["item"] == r.item_code and r.start <= cur["finish"] + pd.Timedelta(minutes=1):
+                cur["finish"] = r.finish
+                cur["n"] += 1
             else:
-                i += 1
-    days = pd.Series([d for d, _ in camps]).value_counts()
-    add("3.1.3 / BRM-07", "plant day (07:00->07:00) with exactly one IL campaign", len(days), int((days == 1).sum()))
-    if _blk:
-        add("3.1.3", "IL campaign with a butyl-friendly (B1/B2/B99) in front of its butyl block", len(camps),
-            sum(p in pp for _, p in camps))
-    else:
-        add("3.1.3", f"IL campaign with {prep} directly in front", len(camps), sum(p == prep for _, p in camps))
-    df = pd.DataFrame(rows)
-    tot = df["occurrences"].sum()
-    fol = df["followed"].sum()
-    summary = {"occurrences": int(tot), "followed": int(fol), "overall_%": round(100.0 * fol / tot, 2),
-               "rule_average_%": round(df["compliance_%"].mean(), 2)}
-    return df, summary
+                if cur:
+                    runs.append(cur)
+                cur = {"machine": m, "item": r.item_code, "start": r.start,
+                       "finish": r.finish, "n": 1, "type": r.item_type}
+        if cur:
+            runs.append(cur)
+    RU = pd.DataFrame(runs)
+    exempt = {U(x) for x in (cfg.get("gap_exempt") or [])}
+    long_items = {U(x) for x in (cfg.get("long_items") or [])}
+    ok = n = 0
+    badgap = []
+    for it, g in RU.sort_values("start").groupby("item"):
+        if U(it) in exempt:
+            continue
+        gap = pd.Timedelta(hours=float(cfg.get("gap_h_long" if U(it) in long_items else "gap_h", 15)))
+        st_ = list(g["start"])
+        for x, y in zip(st_, st_[1:]):
+            n += 1
+            if y - x >= gap - pd.Timedelta(seconds=1):
+                ok += 1
+            else:
+                badgap.append({"item_code": it, "run_start": x, "next_run_start": y,
+                               "gap_h": round((y - x).total_seconds() / 3600, 2)})
+    add("15 h / 24 h repeat gap between runs", "s.4", ok, n,
+        "4RC feeders use the planner's 24 h only where also in long_items",
+        pd.DataFrame(badgap))
+    # BRM-09: split runs of a compound inside one shift
+    RU["shift"] = RU["start"].map(lambda t: (io.plant_day(t), io.shift_of(t)))
+    sp = RU.groupby(["item", "shift"]).size()
+    add("No split runs of a compound within a shift", "BRM-09", int((sp == 1).sum()), len(sp))
 
+    # ---- s.5 changeovers / clean-outs --------------------------------------
+    need_ok = need_n = 0
+    tr = [0, 0]; bu = [0, 0]; k4 = [0, 0]; m9 = [0, 0]
+    k4m = str(cfg.get("k430_2_machine", "106"))
+    badco = []
+    butyl = {U(x) for x in (cfg.get("butyl_compounds") or [])}
+    friendly = {U(x) for x in (cfg.get("friendly_compounds") or [])}
+    for m, g in mx.groupby("machine"):
+        g = g.sort_values("start").reset_index(drop=True)
+        for i in range(1, len(g)):
+            a_, b_ = g.loc[i - 1], g.loc[i]
+            if U(a_.item_code) == U(b_.item_code):
+                continue
+            req = planner.co_s_of(m, a_.item_code, b_.item_code) - 1.0
+            got = (b_.start - a_.finish).total_seconds()
+            need_n += 1
+            hit = got + 0.5 >= req
+            need_ok += hit
+            if not hit:
+                badco.append({"machine": m, "from": a_.item_code, "to": b_.item_code,
+                              "required_s": req, "actual_s": got})
+            af, bf = "FINAL" in U(a_.item_type), "FINAL" in U(b_.item_type)
+            am, bm = "MASTER" in U(a_.item_type), "MASTER" in U(b_.item_type)
+            if (am and bf) or (af and bm):
+                tr[1] += 1; tr[0] += got + 0.5 >= 360
+            if U(a_.item_code) in butyl and U(b_.item_code) not in butyl \
+                    and U(b_.item_code) not in friendly:
+                bu[1] += 1; bu[0] += got + 0.5 >= 120
+            if m == k4m and (af or bf):
+                k4[1] += 1; k4[0] += got + 0.5 >= 120
+            if af:
+                m9[1] += 1; m9[0] += got + 0.5 >= 120
+    add("Changeover / clean-out >= the largest applicable time", "s.5.1",
+        need_ok, need_n, "", pd.DataFrame(badco))
+    add("TR100 master <-> final (360 s)", "BRM-06", tr[0], tr[1])
+    add("120 s clean-out after butyl", "BRM-03", bu[0], bu[1])
+    add("K430-2 final 120 s", "M4", k4[0], k4[1])
+    add("120 s after every final", "M9", m9[0], m9[1])
 
-EXCLUDED = pd.DataFrame([
-    ("BRM-12", "plant-approved mixing cycle time", "setting: runtime = qty / routing proc_time x efficiency"),
-    ("BRM-13", "+5 buffer batches per compound", "setting: buffer_batches = 5 on each compound's last lot"),
-    ("BRM-05", "ML405/ML406 followed by MK3", "not applicable: no MK3 demand in this plan"),
-    ("BRM-04", "K4 sequencing around IL compounds", "not modelled (plant: 'confirm for CTP')"),
-    ("BRM-08", "both finals of one master consecutively", "not modelled (plant: 'confirm for CTP')"),
-], columns=["rule", "description", "why not in the %"])
+    # ---- s.5.2 butyl blocks -------------------------------------------------
+    camps = [{U(x) for x in c} for c in (cfg.get("butyl_campaigns") or [])]
+    fb = [0, 0]; g30 = [0, 0]
+    for m, g in RU.sort_values("start").groupby("machine"):
+        g = g.reset_index(drop=True)
+        for i in range(len(g)):
+            it = U(g.loc[i, "item"])
+            if it not in butyl:
+                continue
+            prev = U(g.loc[i - 1, "item"]) if i else ""
+            same_camp = any(it in c and prev in c for c in camps)
+            if same_camp or (prev in butyl):
+                continue                                 # inside the block
+            fb[1] += 1; fb[0] += prev in friendly
+            if it == "30G":
+                g30[1] += 1; g30[0] += prev in {"B1", "B2", "B99"}
+    add("Friendly directly before every butyl run", "M1", fb[0], fb[1])
+    add("30G with B1 / B2 / B99 directly in front", "M1-30G", g30[0], g30[1],
+        "README: the final block runs IL5 -> 120 s -> 30G, so 30G follows IL5")
+    il = RU[RU["item"].map(U).isin({"IL3", "IL5"})].copy()
+    if len(il):
+        il["pday"] = il["start"].map(io.plant_day)
+        days = il.groupby("pday")["machine"].nunique()
+        add("One IL campaign a day", "s.5.2", int((days == 1).sum()), len(days))
+
+    # ---- PM windows, fixed lots, report targets ----------------------------
+    pm = io.pm_blocks()
+    inpm = 0
+    for r in mx.itertuples(index=False):
+        for s0, f0 in pm.get(str(r.machine), []):
+            if r.start < f0 and r.finish > s0:
+                inpm += 1
+                break
+    add("No mixing lot inside a PM window", "s.2", len(mx) - inpm, len(mx))
+    if "mix_plan" in mx.columns:
+        fx = mx["mix_plan"].fillna("").isin(["fixed", "prep"])
+        add("Mixing lots planned and fixed by the planner", "s.1", int(fx.sum()), len(mx),
+            "the rest were left to the dispatcher")
+    tgt = float(cfg.get("final_target_batches_per_shift", 230))
+    fin = mx[mx["item_type"].astype(str).str.upper().str.contains("FINAL")].copy()
+    fin["shift"] = fin["start"].map(lambda t: (io.plant_day(t), io.shift_of(t)))
+    bps = fin.groupby(["machine", "shift"])["batches"].sum()
+    add(f"Final batches per shift per mixer <= {tgt:g} (report target)", "s.2",
+        int((bps <= tgt).sum()), len(bps), f"max {bps.max() if len(bps) else 0:g}")
+    prep = mx[mx.get("mix_plan", "") == "prep"]
+    add("Prep (friendly) lots are 5 batches", "BRM-01 prep",
+        int((prep["batches"] == 5).sum()), len(prep))
+
+    C = pd.DataFrame(rows)
+    C.to_csv(OUT / "MIXING_RULE_COMPLIANCE.csv", index=False, encoding="utf-8-sig")
+    if ev:
+        pd.concat(ev, ignore_index=True).to_csv(OUT / "MIXING_RULE_EVIDENCE.csv",
+                                                index=False, encoding="utf-8-sig")
+    print("=" * 78)
+    print(f"  MIXING RULE COMPLIANCE   [{a.run}]   {len(mx):,} mixing lots, {len(RU):,} runs")
+    print("=" * 78)
+    for r in C.itertuples(index=False):
+        pct = "  n/a" if r.pct is None else f"{r.pct:5.1f}%"
+        print(f"  {r.code:12s} {r.rule[:52]:52s} {pct}  ({r.followed:,}/{r.occurrences:,})")
+    print(f"[OK] {OUT / 'MIXING_RULE_COMPLIANCE.csv'}")
+    return 0
 
 
 if __name__ == "__main__":
-    args = sys.argv[1:]
-    out = None
-    if "--xlsx" in args:
-        out = args[args.index("--xlsx") + 1]
-        args = args[:args.index("--xlsx")]
-    allrows, sums = [], []
-    for run in args:
-        name = os.path.basename(os.path.dirname(os.path.abspath(run)))
-        df, sm = measure(run)
-        df.insert(0, "version", name)
-        allrows.append(df)
-        sums.append({"version": name, **sm})
-        print(f"\n== {name}: {sm['followed']:,} of {sm['occurrences']:,} followed = {sm['overall_%']}% "
-              f"(average over rules {sm['rule_average_%']}%)")
-        print(df[["rule", "occurrences", "followed", "violations", "compliance_%"]].to_string(index=False))
-    if out:
-        with pd.ExcelWriter(out) as xw:
-            pd.DataFrame(sums).to_excel(xw, "Summary", index=False)
-            pd.concat(allrows).to_excel(xw, "By rule", index=False)
-            EXCLUDED.to_excel(xw, "Not in the %", index=False)
-        print("wrote", out)
+    raise SystemExit(main())

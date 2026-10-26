@@ -1,0 +1,37 @@
+# =====================================================================
+#  rules_v27.yaml - THE PLANT'S OWN PURCHASED LIST
+#
+#  Until now the purchased set was INFERRED: a BOM child was purchased if and
+#  only if no routing row routed it. That inference is silent and wrong in one
+#  direction - a code WITH a routing row is assumed to be MADE, even where the
+#  plant says it is bought in.
+#
+#  `CTP Data Gaps Report (2).xlsx` is the only place in this project that STATES
+#  it. Its Remarks column carries the plant's own words:
+#
+#      "This is a raw material as checked in smart BOM, so we cant have a
+#       machine for it"                                    -> 3 codes
+#      "outside mixing so we cant have the mixer machine"  -> 3 codes
+#      "Obsolete" / "size out"                             -> 18 codes
+#
+#  All six raw-material codes HAVE a PCR routing row, and three of them -
+#  MTCM313, TBA827, TCA313 - were being SCHEDULED. The engine was booking mixer
+#  time to produce material the plant purchases, and the BOM walk was exploding
+#  their inputs as if they were made here too.
+#
+#  v27 declares them. A declared code is contracted out of the BOM walk like any
+#  other purchased item: no lot, no machine time, no kit gate, and its own inputs
+#  disappear with it. The declaration OUTRANKS the routing row, because it is the
+#  more specific statement - and every contradiction between the two is written
+#  to DATA_BLOCKERS.csv so it gets fixed at source instead of re-decided each
+#  run.
+#
+#  Staged by `engine/stage_purchased.py` into data-sql/CTP_Purchased_Items.csv.
+#  Nothing else about v26 changes.
+# =====================================================================
+inherit_from: rules_v26.yaml
+
+meta:
+  run: e2e_v27
+  goal: "the plant's stated purchased list outranks the routing"
+  purchased_source: "CTP Data Gaps Report (2).xlsx -> data-sql/CTP_Purchased_Items.csv"

@@ -1,0 +1,73 @@
+# =====================================================================
+#  rules_v25.yaml - DEPTH FIRST, AND BALANCE THE HOT MACHINES
+#
+#  v24 built 26.2% and cured 15.7%. Its two named constraints:
+#
+#    (2) THE COMPOUND CHAIN STARTS TOO LATE. TBR's first tread traces back
+#        through five serial mixing stages, and the FIRST of them (MB712) did
+#        not start until 1 Oct - 2.5 days after the bell - because 303
+#        master-mix lots shared 4 mixers in DEADLINE order. A deadline says
+#        nothing about how much work still stands behind a lot, so a stage-1
+#        compound feeding four more stages queued behind a stage-5 one that
+#        fed nothing.
+#
+#    (3) ONE MACHINE SATURATED WHILE ITS TWIN IDLED. TBR bead winding 2405 at
+#        96.9% while 2403 - eligible for the same four items - sat at 71%.
+#        Bead winding feeds apexed bead, the line's second constraint.
+#
+#  v25 addresses both.
+#
+#    dispatch.depth_first        the ready queue is ordered by how many
+#                                production stages still stand DOWNSTREAM of a
+#                                lot, deadline as the tie-break. Nothing else
+#                                about the order changes.
+#
+#    dispatch.balance_above_pct  an item is kept whole on one machine unless
+#                                that machine would pass this share of the
+#                                horizon AND another eligible machine is
+#                                lighter - then it is spread lot by lot, by the
+#                                same balancer the existing spill uses. 0 = v24.
+#
+#  WIP: the 06:30 strike of 29 Sep and nothing else.
+#    PPDS      updated_at = 2026-09-29 06:30:00  ->  7,580 trolleys, 424 codes
+#    planning  has NO 06:30 strike (it is written once a day at 23:23), so it
+#              is aligned to the same instant on produced_time, for the 278
+#              codes PPDS does not carry. Stated, not hidden.
+#    compound  4,696 batches -> 1,016,565 kg via routing batch_size
+# =====================================================================
+inherit_from: rules_v24.yaml
+
+meta:
+  run: e2e_v25
+  goal: "start the deep chains first; stop one machine saturating beside an idle twin"
+  wip_source: "JK_CTP_PPDS.CTP_Opening_WIP strike 2026-09-29 06:30 + planning for codes it lacks"
+
+# =====================================================================
+#  BOTH LEVERS WERE BUILT, MEASURED, AND TURNED OFF. THE MEASUREMENT:
+#
+#      v24 baseline (this WIP)        BOTH built 27.0%   cured 16.2%
+#      depth_first: true               9.4%             5.6%
+#      balance_above_pct: 60          20.8%            12.6%
+#      both together                  15.9%             6.6%
+#
+#  WHY DEPTH-FIRST LOSES. The reasoning behind it was that a stage-1 compound
+#  feeding four more stages should outrank a stage-5 one feeding none. But the
+#  CPM backward pass ALREADY prices that: a lot deep in a chain gets an early
+#  LFT precisely because its successors need it. Ordering on depth as well
+#  double-counts the chain and overrides genuine urgency, so shallow lots with
+#  imminent deadlines starve. It cost 17.6 points of built.
+#
+#  WHY BALANCING LOSES. Spreading an item across machines buys idle hours and
+#  pays for them in changeovers, and it breaks the campaign the item was part
+#  of. 19 items spread cost 6.2 points. On a plant whose constraint is the
+#  CHAIN rather than any machine, extra setup on a feeding machine delays
+#  everything downstream of it - which is most of the plan.
+#
+#  The code stays, priced and available behind these knobs, because the day a
+#  machine is genuinely the binding constraint the balance rule is the right
+#  tool. On this plan it is not, and a lever that is off and measured is worth
+#  more than one that is on and assumed.
+# =====================================================================
+dispatch:
+  depth_first: false
+  balance_above_pct: 0

@@ -1,0 +1,52 @@
+# =====================================================================
+#  rules_v23.yaml - OPENING INVENTORY FROM THE MERGED PLANNING TABLE
+#
+#  Everything from v19-v22 is kept. One thing changes: WHICH table the opening
+#  inventory comes from.
+#
+#  WHY
+#    JK_CTP_PPDS.CTP_Opening_WIP is a TROLLEY tracker - every row a rack or cart
+#    with an `mhe_code`, counted in NOS or M. It holds ZERO kilogram rows on any
+#    date, so it carries no compound. Compound is 79% of PCR demand and 74% of
+#    TBR, so a plan netted against it alone mixes 3.5M kg from raw and builds
+#    0.2% (v22).
+#
+#    jkplanning_CTP.opening_wip is the MERGED view: the same trolley rows PLUS
+#    the compound feed. It is a database table, read directly - not a fallback,
+#    and nothing else is consulted.
+#
+#  THE 07:00 POSITION
+#    The planning table is struck once a day at 23:23. Checked row by row: every
+#    one of the 33,963 rows on the 2026-09-29 snapshot was produced at or before
+#    29 Sep 07:00, so that snapshot IS the floor as the plan's first shift
+#    opened. The --asof cut is kept in the stager as a guard, and here it is a
+#    no-op rather than an assumption.
+#
+#  THE COMPOUND QUANTITY HAD TO BE REBUILT
+#    Every compound row carries unit `NUM` and an `inventory` that is the
+#    batch's SERIAL NUMBER, not its weight - B186 reads 9, 10, 11, 12, 13 on
+#    successive batches. Summing it gives a meaningless 74,744. ONE ROW IS ONE
+#    BATCH, and the batch weight is in the routing (`batch_size`, `batch_UNIT`
+#    KG) - the same Batches -> KG chain the MPQ resolver uses. Rewritten that
+#    way: 4,653 batches = 1,017,205 kg. Two codes (JV06, JT488, 46 batches) have
+#    no batch_size in any routing and are DROPPED, not guessed.
+#
+#  WHAT THIS TABLE COSTS
+#    250 codes / 23,591 rows in it are in NEITHER BOM - truncated codes like
+#    `6`, `9`, `184`, `185` that look like the leading characters have been lost
+#    (`JT444` -> `444`). They cannot be netted against anything and are reported
+#    as orphans. That is a data-quality debt this source carries and the PPDS
+#    trolley table does not.
+#
+#  Reproduce:
+#      python engine/stage_wip_planning.py --date 2026-09-29 \
+#             --asof "2026-09-29 07:00:00"
+#      python engine/stage_wip_v6.py --split-from e2e_v23
+# =====================================================================
+inherit_from: rules_v22.yaml
+
+meta:
+  run: e2e_v23
+  goal: "the 07:00 floor including compound, from jkplanning_CTP.opening_wip"
+  wip_source: "jkplanning_CTP.opening_wip @ 2026-09-29 (all rows produced <= 07:00)"
+  compound_rebuilt: "4,653 batches x routing batch_size = 1,017,205 kg"

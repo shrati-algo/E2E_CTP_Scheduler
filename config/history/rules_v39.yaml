@@ -1,0 +1,24 @@
+# =====================================================================
+#  rules_v39.yaml - v38 + DATA-BLOCKER POLICY + BUILDING OVERLAP FIX
+#
+#  Same data, plan and knobs as v38 (data-ppds-v38, open_h 0, master
+#  compound available, BOM unchanged, cutters/slitters bypassed).
+#
+#  Code changes (no rule knob):
+#   * blocker_policy.py / phase0 / phase7 / make_validation_report.py:
+#     every SKU is CLEAN, ASSUMED or DATA_BLOCKED. Data-blocked demand
+#     (no BOM, no GT routing, ...) is listed in VALIDATION_REPORT.xlsx and
+#     taken out of the final figures (plan AND cured). Assumptions are
+#     listed with value, source and tyres affected.
+#   * phase5_placement.py: building run time is a column that travels with
+#     its trolley (it was misaligned after a re-sort: 300 overlapping lots in
+#     v38); builders re-laid after the bead gate; G1/G2 fatal on the written
+#     building plan.
+#  See v38_corrections/IMPLEMENTATION_PLAN.md steps 1 and 2.
+# =====================================================================
+inherit_from: rules_v38.yaml
+
+meta:
+  run: e2e_v39
+  goal: "v38 + data-blocker policy (VALIDATION_REPORT) + building overlap fix"
+  data: "data-ppds-v38/"

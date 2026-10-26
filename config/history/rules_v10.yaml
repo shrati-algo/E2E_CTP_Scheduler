@@ -1,0 +1,16 @@
+# v10 — proper building SEQUENCING and machine utilisation.
+#
+# v9 serialised building trolleys on each machine in PLAN ORDER. A trolley
+# whose kit was ready early sat behind one whose kit was ready late, and the
+# delay cascaded down the machine. v10 dispatches by KIT-READY, exactly as
+# pns-product-21golive/v10 does: a lot is eligible once released, and among
+# the released the plan's own intent breaks ties.
+inherit_from: rules_v9.yaml
+meta:
+  run: e2e_v10
+  variant: "kit-ready building dispatch + full sequencing"
+
+building:
+  # plan_order = pre-v10 behaviour | kit_ready = v10 event-driven dispatch
+  sequence_by: kit_ready
+  rebalance: on

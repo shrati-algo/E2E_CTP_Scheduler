@@ -1,0 +1,145 @@
+# =====================================================================
+#  rules_v16.yaml - SEQUENCING AND KIT COMPLETENESS
+#
+#  v15 built 100% of the plan and cured 80.5%, but 35 of 185 trolleys started
+#  late and ALL NINE builder queues had a kit miss at their head - a 6.4-minute
+#  bead-apex miss on 3401 propagated through 8 of its 9 trolleys.
+#
+#  v16 changes nothing about WHAT is made. It changes WHEN, by four levers:
+#
+#    1. MPQ from the plant's own CTP_Master_MPQ, applied STRICTLY - with the
+#       Parameters bands honoured, the BOM names aliased, and a hard refusal
+#       where the units disagree.
+#    2. Lots cut on NEED-BY SPAN, bounded by that floor, so one lot no longer
+#       serves consumers it cannot all reach.
+#    3. Dispatch ordered by DEADLINE, with the campaign hold yielding to
+#       urgency and the campaign clock yielding to negative slack.
+#    4. A machine runs ONE lot at a time, so the utilisation those levers are
+#       tuned against is real.
+#
+#  Changeovers are allowed to rise. The budget is 900 idle hours measured on
+#  the 11 machines that deliver late material; ~150 extra changeovers is ~38 h.
+#
+#  WIP is taken as it currently stands - no re-split, no re-pull.
+# =====================================================================
+inherit_from: rules_v15.yaml
+
+meta:
+  plant: CTP
+  run: e2e_v16
+  goal: "sequencing + full-kit completeness in time"
+  source: "master-business-rules/Upstrean Business rules.xlsx (76 rules) + mpq-data/CTP_Master_MPQ.csv"
+
+# =====================================================================
+#  1. MPQ - the plant's file, followed strictly
+# =====================================================================
+#  `mpq-data/CTP_Master_MPQ.csv` (36 rows: 22 PCR + 14 TBR) is read in
+#  preference to jkt_mpq_{line}. It is the same data, but it keeps the
+#  `Parameters` column, which the old loader threw away with a `setdefault`:
+#  every PCR tread took the 12-14 inch floor of 310 M, including 15-20 inch
+#  treads whose own floor is 206 M. Four edge-strip gauges and two edge-gum
+#  colour ranges had the same problem.
+#
+#  THE MASTER AND THE BOM NAME THE SAME MATERIAL DIFFERENTLY. Only 12 of 17
+#  PCR terms and 6 of 14 TBR terms match, so most floors never reached an item.
+#  These aliases carry the plant's stated floor onto the BOM's own name.
+mpq:
+  # Take the CHARGE COUNT from CTP_Master_MPQ itself (MASTER/FINAL COMPOUND =
+  # 3 Batches) instead of the rule file's BRM-01 override of 5. The plant's own
+  # file is the instruction; BRM-01 came from the older 48-rule workbook.
+  use_master_batches: true
+
+mpq_aliases:
+  "Bead Apex":                     ["APEXED BEAD"]              # TBR 33 Nos
+  "Wound Bead":                    ["Bead Bundle"]              # TBR 600 Nos
+  "Calendar Roll (spool)":         ["CALANDARED ROLL"]          # 300 M
+  "Calendra Roll (Dipped Cord)":   ["CALANDARED ROLL"]          # 300 M
+  "Chaffer IL( mono 80, mono 120)": ["SLITTED MATERIAL",
+                                     "Slitted Material"]        # PCR 300 M
+  "Chaffer":                       ["SLITTED MATERIAL"]         # TBR 350 M
+  # --- ADDED after the plant corrected the units in CTP_Master_MPQ ---------
+  # `Belt` and `Ply` were stated in METRES against a BOM that counts PIECES,
+  # so both were held back. The live table now reads Nos for both, matching
+  # the BOM exactly, so the floors can finally reach their items.
+  "Belt":                          ["BELT-1", "BELT-2",
+                                    "BELT-3", "BELT-4"]        # TBR 200 Nos
+  "Ply":                           ["BODYPLY"]                 # TBR 130 Nos
+
+#  STILL NOT ALIASED. Two unit conflicts survive the correction:
+#      STC          180 M  ->  STEEL CHIPPER LEFT/RIGHT (NOS)  - 12 codes
+#      Inner Liner  140 M  ->  `30G` (KG)                      -  1 code
+#  `Inner Liner` DOES match the 20 TIL-* codes in metres; only `30G`, the
+#  inner-liner COMPOUND, is in kilograms. Each refusal is recorded in
+#  MPQ_RESOLUTION.csv rather than silently applied or silently dropped.
+
+# =====================================================================
+#  2. Cut lots on need-by span, within the floor
+# =====================================================================
+lot_sizing:
+  # One lot may cover at most this much need-by span before it is cut.
+  # Measured on v15: the median late lot served 4 consumers over 24 h (PCR) /
+  # 15.9 h (TBR) and finished 2.9 h after the FIRST need but 16.6 h before the
+  # last. 6 h keeps a lot useful while putting the first consumer inside reach.
+  #
+  # ALWAYS BOUNDED BY Minimum_Run_Qty: a bucket of Q becomes at most
+  # floor(Q / min_run_qty) lots. The floor is never broken to fix timing.
+  #
+  # MEASURED AND TURNED OFF. The case for splitting was built on v15, where
+  # machines ran several lots at once and an extra changeover therefore cost
+  # nothing. With exclusivity enforced the setup is real, and splitting is a
+  # clear loss:
+  #     cap off  ->  1,303 lots, 139 h setup, PCR 79.4%  TBR 78.0% cured
+  #     cap 12 h ->  1,827 lots, 216 h setup, PCR 75.5%  TBR 78.3%
+  #     cap  6 h ->  2,533 lots, 301 h setup, PCR 55.1%  TBR 57.9%
+  # The machinery stays, priced and available; the cap is 0 until a machine is
+  # genuinely changeover-cheap enough to earn it.
+  need_span_cap_h: 0
+
+# =====================================================================
+#  3. Sequencing - deadline first, changeover second
+# =====================================================================
+# =====================================================================
+#  4. Upstream runway - the single largest lever in v16
+# =====================================================================
+#  Serialising the machines pushes every BOM chain later, and each hop
+#  compounds. With v15's 24 h runway the chains simply ran out of room:
+#      open_h  24 ->  PCR 59.1%  TBR 16.4% cured
+#      open_h  48 ->  PCR 79.5%  TBR 50.0%
+#      open_h  72 ->  PCR 79.5%  TBR 74.4%
+#      open_h  96 ->  PCR 79.4%  TBR 78.0%   <- the plateau
+#      open_h 120 ->  PCR 79.4%  TBR 78.0%   (no further gain)
+#  Affordable because nothing is saturated: after serialisation only ONE
+#  machine (bias cutter 2001) exceeds 70% utilisation and none exceeds 90%.
+engine:
+  open_h: 96
+
+dispatch:
+  # BR-16 read correctly. v15's ready-queue key was (campaign, LFT) and the
+  # pick ranked (related, belt-twin, wire, campaign, LFT) - deadline FIFTH,
+  # behind three grouping preferences and a campaign clock.
+  urgency_first: true
+
+  # The campaign hold yields when another releasable lot has less than this
+  # much slack. 0 = never break (v15 behaviour).
+  campaign_break_slack_h: 4
+
+  # A lot whose material is ready and whose slack is already negative no
+  # longer waits for its campaign release time. On v15, 53 late lots sat in
+  # front of an IDLE machine for exactly this reason.
+  material_ready_beats_campaign: true
+
+  # A MACHINE RUNS ONE LOT AT A TIME. `m_free` existed and was never used;
+  # v15 wrote 803 overlapping lots, concurrency to 8.76x on K430-2 M. Without
+  # this every utilisation figure - and every lever tuned against one - is
+  # measured on a schedule where a machine can be in two places at once.
+  enforce_machine_exclusivity: true
+
+# =====================================================================
+#  Carried from v15 unchanged
+# =====================================================================
+#  * buffer_aliases      - Side wall / Appex Bead / Belt / Bead onto the BOM's
+#                          names, restoring the buffer the plant already stated
+#                          to ~1,000 demand rows
+#  * changeover.mixing_fixed_min: 1   (60 s, plant override of BR-74's 2 min)
+#  * machines.mixer_roles, department_register, spread_all_eligible
+#  * downtime (BR-10), curing.even_lots, building.require_full_kit

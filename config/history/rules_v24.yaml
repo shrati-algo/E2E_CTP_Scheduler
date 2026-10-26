@@ -1,0 +1,42 @@
+# =====================================================================
+#  rules_v24.yaml - PPDS FIRST, PLANNING ONLY FOR WHAT PPDS DOES NOT CARRY
+#
+#  v22 read JK_CTP_PPDS.CTP_Opening_WIP alone and built 0.2%: that table is the
+#  plant's TROLLEY tracker and holds zero kilogram rows on any date, so it
+#  carries no compound - and compound is 79% of PCR demand and 74% of TBR.
+#
+#  v23 read jkplanning_CTP.opening_wip alone and built 18.0%: it does carry
+#  compound, but it is dirtier - 250 truncated codes (`JT444` -> `444`) that
+#  match no BOM, and a compound quantity that is a batch counter, not a weight.
+#
+#  v24 uses each for what it is good at, PER ITEM CODE:
+#      PPDS WINS wherever it carries the item at all - real units, an mhe_code
+#      per trolley, three strikes a day.
+#      PLANNING is consulted ONLY for codes PPDS does not have.
+#  Every row records which table it came from, so the split is auditable rather
+#  than assumed. This is not "PPDS failed, try the other" - it is a stated
+#  division of responsibility between two feeds that cover different material.
+#
+#  ONE INSTANT FOR BOTH: --asof cuts each source on `produced_time`, so the
+#  merge is the material that physically existed at 07:00 on 29 Sep - not one
+#  table's 06:30 strike glued to another's end-of-day view. PPDS rows are
+#  de-duplicated to the latest `updated_at` per production_id first (it keeps
+#  every refresh; summing them overstates stock by ~80%).
+#
+#  Staged 2026-09-29 @ 07:00:
+#      PPDS      15,201 rows -> 7,612 trolleys   426 codes   163,429 units
+#      planning  26,869 rows kept for 278 codes PPDS lacks
+#      compound  4,699 batches -> 1,017,205 kg via routing batch_size
+#      MERGED    34,435 rows   1,510,651 units
+#
+#  Reproduce:
+#      python engine/stage_wip_merged.py --date 2026-09-29 \
+#             --asof "2026-09-29 07:00:00"
+#      python engine/stage_wip_v6.py --split-from e2e_v24
+# =====================================================================
+inherit_from: rules_v23.yaml
+
+meta:
+  run: e2e_v24
+  goal: "both WIP feeds, each where it is authoritative, at one 07:00 instant"
+  wip_source: "JK_CTP_PPDS.CTP_Opening_WIP first; jkplanning_CTP.opening_wip per code it lacks"

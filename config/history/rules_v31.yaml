@@ -1,0 +1,35 @@
+# =====================================================================
+#  rules_v31.yaml - EVERY MASTER FROM JK_CTP_PPDS, OCTOBER PLAN
+#
+#  Rules are v29's (= v30's: v30 changed only where MPQ and aging were staged
+#  from, not any engine setting). What changes is the DATA, staged into
+#  data-ppds/ by:
+#
+#      refresh_ctp_sql.py --ppds-only --out data-ppds
+#          (CTP_WIP_DATE=2026-10-22  CTP_WIP_ASOF="2026-10-22 08:54:43.552"
+#           CTP_GT_DATE=2026-10-22)
+#      stage_wip_ppds.py           Batches -> KG on final compound
+#      stage_wip_v6.py             per-line split by this plan's demand
+#
+#  WHAT IS DELIBERATELY NOT USED (none of it is in JK_CTP_PPDS)
+#    * database-changes/data-files local MPQ / aging (v30)  -> CTP_Master_MPQ,
+#      CTP_Master_Aging instead
+#    * CTP Data Gaps Report (2).xlsx purchased list (v27)    -> purchased is
+#      inferred again: a BOM child with no routing row
+#    * jkplanning_CTP.opening_wip compound feed (v24)        -> PPDS WIP only;
+#      it now has final compound, still no master compound
+#    * planning fill of the building allowable matrix        -> PPDS rows only
+#    * Master_WC_Master_Curing_{line}                        -> not staged
+#    * PLANT_MACHINE_REGISTER.csv (CTP Machines.xlsx)        -> not staged, so
+#      machine-coverage validation has no register to measure against
+#
+#  Plan: plan-latest/ ctp_{building,curing}_schedule_October_2026_{pcr 26,tbr 27}
+#        22 Oct 07:00 -> 1 Nov 07:00.  Curing schedules supplied, not derived.
+# =====================================================================
+inherit_from: rules_v29.yaml
+
+meta:
+  run: e2e_v31
+  goal: "October plan, every master from JK_CTP_PPDS"
+  plan: "plan-latest/ (October 2026, pcr 26 / tbr 27)"
+  data: "data-ppds/ - refresh_ctp_sql.py --ppds-only"

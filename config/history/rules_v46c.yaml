@@ -1,0 +1,20 @@
+# =====================================================================
+#  rules_v46c.yaml - v46b with the BOM from JK_CTP_PPDS.CTP_Master_BOM_v2
+#  Data folder: data-ppds-v38-bomv2 = data-ppds-v38 with ONLY jkt_bom_pcr/tbr
+#  replaced (CTP_Master_BOM_v2, staged verbatim - its repeated GT -> roll rows
+#  are separate belts cut from one roll and are summed by the walk).
+#  BOM_v2 already skips the cutters and slitters, so for them only the
+#  TRANSFER TIME remains: the minimum ageing of the bypassed code(s) between a
+#  roll and the tyre, found from the ROUTING (each cutter / slitter row names
+#  its input). Everything else is v46b (TDA in line, cut-stock conversion).
+#  Cut stock in the opening WIP still needs a roll-per-metre factor that
+#  BOM_v2 no longer carries; it is read from the pre-v2 BOM (data-ppds-v38)
+#  as a CONVERSION FACTOR ONLY - stated assumption, see BYPASS_REPORT.
+# =====================================================================
+inherit_from: rules_v46b.yaml
+meta: {run: e2e_v46c, goal: "v46b + BOM from CTP_Master_BOM_v2 (cutters/slitters already removed)", data: "data-ppds-v38-bomv2/"}
+bypass_transfer_from_min_aging: true
+bypass_transfer_parents_from_routing: true
+wip:
+  bypass_conversion_bom: "data-ppds-v38"
+bypass_cut_code_types_from: "data-ppds-v38"

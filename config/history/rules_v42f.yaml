@@ -1,0 +1,25 @@
+# =====================================================================
+#  rules_v42f.yaml - v42 + THE PLAN'S MACHINE/SKU SEQUENCE IS KEPT ON BUILDERS
+#
+#  Plant rule: the same machine-SKU pairs as the input plan, in the same
+#  order (plan A-B-C -> schedule A-B-C); only the times may shift.
+#  v10..v42 used kit-ready dispatch + rebalancing on builders (rules_v10):
+#  in e2e_v42, 20 trolleys moved builder and 17 of 20 builders ran a
+#  different order. Curing already keeps the plan's press and order.
+#   * building.sequence_by: plan_order   - each builder takes trolleys in plan order
+#   * building.rebalance: off            - no trolley changes builder
+#   * building.enforce_plan_sequence     - check G8 is FATAL
+#  Code: phase5 plan-order path uses the setup for the actual predecessor
+#  (= the plan's predecessor) and the final re-lay keeps plan order.
+# =====================================================================
+inherit_from: rules_v42.yaml
+
+meta:
+  run: e2e_v42f
+  goal: "v42 + builders keep the plan's machine and sequence (times shift only)"
+  data: "data-ppds-v38/"
+
+building:
+  sequence_by: plan_order
+  rebalance: off
+  enforce_plan_sequence: true

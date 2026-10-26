@@ -1,0 +1,5 @@
+# v42b = v42a + cold start 6a: stock on bypassed cutter/slitter codes is netted
+inherit_from: rules_v42a.yaml
+meta: {run: e2e_v42b, goal: "v42a + cut stock netted", data: "data-ppds-v38/"}
+cold_start:
+  net_cut_stock: true

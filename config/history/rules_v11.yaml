@@ -1,0 +1,22 @@
+# v11 — ONLY what the BTP v10 pipeline ACTUALLY RUNS.
+#
+# WHY THIS VERSION EXISTS
+#   v8-v10 stood on `make_virtual_wip.py`, described in its own docstring as a
+#   "CTP port of v10's graded opening cover". That script is NOT part of the BTP
+#   engine as run:
+#     * it is not among the steps in v10/run_db.sh (etl, plan, validate, phase1,
+#       a2seed, phase2..phase7, workbook, wip report, dagbook, push)
+#     * it appears in no BTP doc — RUN_LOG, V10_NOTES, README, CHECKLIST, INPUTS
+#     * its output, inventory_combined_virtual.xlsx, exists nowhere in the tree
+#   The only opening stock BTP genuinely seeds is make_a2_default_stock.py: one
+#   shift, for the 53 bead-apex codes ending `-A2` that the live dump reports as
+#   zero. CTP's BOM contains NO `-A2` codes, so that step is a no-op here and is
+#   correctly absent rather than reinterpreted.
+#
+#   v11 therefore nets against the REAL jkplanning_CTP.opening_wip and nothing
+#   else. Everything else carried forward from v10 is kept, because each one is
+#   a BTP behaviour implemented in a file BTP actually runs.
+inherit_from: rules_v10.yaml
+
+virtual_wip:
+  enabled: false        # not a BTP run step — see above

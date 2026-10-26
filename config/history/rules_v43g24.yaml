@@ -1,0 +1,6 @@
+# v43g24 = v43f with the 901 bucket capped at 24 h (no need-gap break, no 24 h cut),
+# progressive release on. Middle ground between v43 (tiny lots) and v43c (66 h lots).
+inherit_from: rules_v43f.yaml
+meta: {run: e2e_v43g24, goal: "v43 + 901 buckets of 24 h + progressive release", data: "data-ppds-v38/"}
+campaign:
+  lot_window_h: 24

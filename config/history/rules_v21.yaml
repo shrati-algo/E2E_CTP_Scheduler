@@ -1,0 +1,44 @@
+# =====================================================================
+#  rules_v21.yaml - NO RUNWAY, REAL STOCK, EVERY MACHINE PUSHING
+#
+#  v20 asked what the plan looks like against the floor as it stood at 07:00 on
+#  29 Sep. It answered 23.1% - but that answer was still flattered, because
+#  `open_h: 96` let the engine invent FOUR DAYS of upstream production before
+#  the plan starts. If the plant really had been mixing and extruding since
+#  25 Sep, that output would already be in the 29-Sep snapshot. It is not:
+#  opening stock covers 4.2% (PCR) and 7.2% (TBR) of demand.
+#
+#  v21 removes the invention.
+#
+#    open_h: 0          upstream starts when the plan starts - 29 Sep 07:00.
+#                       Nothing is made before the bell that the floor cannot
+#                       show. The ONLY head start is the real WIP.
+#
+#    right_shift: off   pass 2 slides every lot toward its consumer for
+#                       freshness. That is right when there is slack to spend.
+#                       With no runway there is none - every lot is already
+#                       late - and sliding one later only holds a machine idle
+#                       in front of work it could be doing. Every lot now runs
+#                       as EARLY as its material allows.
+#
+#  Aging is untouched, and it is the reason a machine can still be idle at the
+#  bell: min aging on master compound, then on final compound, then on the
+#  calendered roll, is a real wait that no dispatch rule may skip. A machine
+#  with nothing matured in front of it is not idle by choice.
+#
+#  WIP: JK_CTP_PPDS.CTP_Opening_WIP @ 2026-09-29 sync 06:30 (7,587 rows,
+#  160,910 units) - pinned with CTP_WIP_ASOF, as in v20.
+# =====================================================================
+inherit_from: rules_v20.yaml
+
+meta:
+  run: e2e_v21
+  goal: "no invented pre-plan production; every machine runs as early as its material allows"
+
+engine:
+  # THE PLANT STARTS WHEN THE PLAN STARTS. No phantom runway.
+  open_h: 0
+
+dispatch:
+  # Run early, not just-in-time. See the header.
+  right_shift: false

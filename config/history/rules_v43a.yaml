@@ -1,0 +1,6 @@
+# v43a = v42f + calender 901 campaigns (line speed: routing proc_time only, unchanged)
+inherit_from: rules_v42f.yaml
+meta: {run: e2e_v43a, goal: "v42f + 901 campaigns / PCR-TBR blocks", data: "data-ppds-v38/"}
+campaign:
+  machines: ["901"]
+  window_h: 8

@@ -1,0 +1,46 @@
+# =====================================================================
+#  rules_v19.yaml - STRICT DATABASE SOURCING
+#
+#  Every number the engine uses now comes from a named database table.
+#  There is no fallback file, no rule-file constant, no invented default.
+#  Where the database does not carry what a stage needs, the stage records a
+#  DATA BLOCKER and carries on with nothing - so the gap lands in the output
+#  instead of being papered over inside the result.
+#
+#  WHAT WAS REMOVED
+#    mpq-data/CTP_Master_MPQ.csv   a hand-placed file that silently outranked
+#                                  the database. The engine now reads
+#                                  JK_CTP_PPDS.CTP_Master_MPQ, staged verbatim.
+#    jkt_mpq_{line}                the planning fallback. Gone: a run must not
+#                                  quietly answer from a second table.
+#    jkt_buffer_master_{line}      replaced by JK_CTP_PPDS.CTP_Master_Buffer,
+#                                  which carries both lines and the same hours.
+#    buffer_aliases                a YAML list is not a database table.
+#    buffer_overrides              an hour figure no table states.
+#    mpq_aliases                   likewise - the MPQ-to-BOM name bridge is now
+#                                  DERIVED from the two tables' own vocabularies
+#                                  and every non-exact join is reported.
+#
+#  The name resolvers stay, because a name join is not a value: the plant's two
+#  tables genuinely call the same material different things, and the join is
+#  built from those tables alone. Every non-exact join is a NAME_MISMATCH
+#  blocker so the fix can be made where it belongs - in the database.
+# =====================================================================
+inherit_from: rules_v18.yaml
+
+meta:
+  run: e2e_v19
+  goal: "strict database sourcing, with every gap named as a data blocker"
+  sources:
+    mpq:    "JK_CTP_PPDS.CTP_Master_MPQ"
+    buffer: "JK_CTP_PPDS.CTP_Master_Buffer"
+    wip:    "JK_CTP_PPDS.CTP_Opening_WIP"
+    aging:  "JK_CTP_PPDS.CTP_Master_Aging"
+    bom:    "jkplanning_CTP.jkt_bom_{line}"
+    routing: "jkplanning_CTP.jkt_routing_{line}"
+
+# These keys are no longer read by any loader. Left named, with the reason, so
+# nobody re-adds one thinking it was an oversight.
+buffer_aliases: {}     # REMOVED - not a database table
+buffer_overrides: {}   # REMOVED - an hour figure no table states
+mpq_aliases: {}        # REMOVED - the join is derived from the two tables

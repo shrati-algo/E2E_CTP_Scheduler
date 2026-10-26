@@ -1,0 +1,12 @@
+# =====================================================================
+#  rules_v44c_all.yaml - v44b + EVERY MACHINE CHOOSES ITS NEXT LOT ONLY WHEN FREE
+#  (v44b = v43g24 + bead machines queue by trolley need + opening stock rested
+#  per demand). A busy machine woken by new ready work is re-queued at its free
+#  time instead of booking its next lot hours ahead.
+# =====================================================================
+inherit_from: rules_v44b.yaml
+meta: {run: e2e_v44c_all, goal: "v44b + choose-when-free on every machine", data: "data-ppds-v38/"}
+dispatch:
+  choose_when_free: all
+debug:
+  log_machines: ["2403", "2404", "2405"]

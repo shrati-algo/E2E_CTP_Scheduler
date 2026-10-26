@@ -1,0 +1,43 @@
+# =====================================================================
+#  rules_v22.yaml - SHELF LIFE IS A CONSTRAINT, NOT A PREFERENCE
+#
+#  The aging master states MinAging and MaxAging on the same row. The engine
+#  honoured only the first.
+#
+#    MIN aging  enforced everywhere - phase 2 batch maturity, phase 4's backward
+#               pass, phase 5's material-ready gate, the full-kit gate, and
+#               validator check 3. Never violated.
+#    MAX aging  applied to OPENING WIP in phase 2 and NOWHERE ELSE. Placement
+#               never read it: `aging[item][1]` was not loaded. So material the
+#               schedule itself made could be produced and then consumed long
+#               after it had gone off.
+#
+#  Measured before this change, producer -> consumer edges consuming expired
+#  material:
+#      v20 (right-shift on)   PCR 321 / 2,502 = 12.8%   TBR 504 / 1,756 = 28.7%
+#      v21 (right-shift off)  PCR 344 = 13.7%           TBR 375 = 21.4%
+#      worst overrun 145.3 h
+#
+#  The right-shift was never a fix for this. It slides lots toward consumption
+#  as a PREFERENCE capped at LFT, so it left a quarter of TBR handovers expired
+#  even when switched on, and does nothing at all when switched off.
+#
+#  v22 adds the constraint. A freshness pass moves a PRODUCER later until its
+#  material is still in date when its consumer starts - later only, so nothing
+#  already proven can break - bounded by every consumer's min aging and by the
+#  next lot on the machine. A lot whose two consumers are further apart than its
+#  own shelf life cannot be made fresh at any start time; it is reported in
+#  SHELF_LIFE_STUCK.csv rather than left silently expired.
+#
+#  Validator check 7 is the mirror of check 3 and proves it on the written
+#  schedule.
+#
+#  EXPECT FULFILMENT TO FALL. Material used after expiry was material that on a
+#  real floor would have been scrapped and re-made; removing it removes tyres
+#  that were never really there.
+# =====================================================================
+inherit_from: rules_v21.yaml
+
+meta:
+  run: e2e_v22
+  goal: "min AND max aging enforced at every BOM stage"

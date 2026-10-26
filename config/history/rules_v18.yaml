@@ -1,0 +1,47 @@
+# =====================================================================
+#  rules_v18.yaml - DISPATCH: A READY LOT IS NOT ALLOWED TO WAIT BEHIND
+#                   AN UNREADY ONE
+#
+#  v17 fixed the buffer LOOKUP (every hour figure now comes from
+#  jkt_buffer_master, resolved to BOM names from the database alone) and moved
+#  the totals not at all. The trace said why.
+#
+#  Worst PCR blocker in v17, `BRTTL SLT`, which heads two builder queues:
+#
+#      B333      mixing    m=104    25 Sep 20:48 -> 21:04    on time
+#      BRTTL     4-roll    m=901    26 Sep 09:35 -> 09:41    8.6 h late
+#      BCFT002   bias cut  m=2001   30 Sep 04:52 -> 05:22   95.8 h late   <-- 91 h
+#      BRTTL SLT slitter   m=2402   30 Sep 07:33 -> 07:36   98.0 h late
+#
+#  A 91-hour hole, on a machine under 31% utilised, in front of a zero-slack
+#  critical lot. Neither capacity nor deadline: a DISPATCH defect.
+#
+#  Instrumenting the loop on machine 2001 showed it exactly. A machine's ready
+#  queue is bucketed BY ITEM CODE, and releasability was tested on the HEAD of
+#  each bucket alone:
+#
+#      buckets={'BI-MONO001': 7, 'BCFT002': 6, 'BI-MONO002': 3}
+#      none releasable at 18:06; gates={BI-MONO001: 22:22, BCFT002: 22:57, ...}
+#
+#  Sixteen lots queued, machine idle, and the machine is told there is nothing
+#  to run - because in each bucket the single most urgent lot happened not to
+#  be material-ready yet. The ready lots BEHIND it were never looked at.
+#
+#  v18 tests the WHOLE bucket. The pick is unchanged in every other respect:
+#  the filtered queue keeps the same (LFT, campaign, lot) order, so the
+#  dispatcher still takes the most urgent lot - it now takes the most urgent
+#  READY one instead of stalling on an unready head.
+#
+#  Nothing else changes: same MPQ, same lot sizing, same campaigns, same
+#  buffers, same curing.
+# =====================================================================
+inherit_from: rules_v17.yaml
+
+meta:
+  run: e2e_v18
+  goal: "no idle machine in front of a ready lot"
+
+dispatch:
+  # Test every lot in a machine's per-item ready bucket, not only its head.
+  # false restores the v17 behaviour exactly, for comparison.
+  scan_whole_bucket: true

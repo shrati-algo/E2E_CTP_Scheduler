@@ -1,0 +1,49 @@
+﻿Rule ID,Section,Category,Sub-Category,Business Rule,Remarks,needs_confirmation
+BRG-01,General,PM/MTC,PM/MTC,No production or changeover is scheduled on a machine during its PM/MTC block,,False
+BRG-02,General,Data Source,Aging,Use Material Aging data from SMART.,,False
+BRG-03,General,Data Source,MPQ,Use Plant-maintained MPQ Master.,,False
+BRM-01,Mixing,MPQ,MPQ,Batch Scheduling – The scheduled quantity should follow the logic: MPQ =  5 Batches.,,False
+BRM-02,Mixing,MPQ,MPQ,"Sticky compounds (JT444, JT466) require 3 batch stacking used in PCR sidewall",,False
+BRM-03,Mixing,Sequencing,Sequencing,"Butyl compounds (ML405, ML605, 29Mg) must be produced continuously. After these compounds, only butyl-friendly compounds (MB100, MB200, XMB98) should be produced.",,False
+BRM-04,Mixing,Sequencing,Sequencing,K4 before/after IL compound: Banbury K4 sequencing must consider before and after IL compound production,Need confirmation if applicable for CTP,True
+BRM-05,Mixing,Sequencing,Sequencing,"ML405 / ML406 followed by MK3: After making ML405 or ML406, MK3 compound needs to be produced.",Need confirmation if applicable for CTP,True
+BRM-06,Mixing,Sequencing,Sequencing,"Master and final compound on same machine: If the same machine makes master and final compound, TR100 compound must be added as cleanout between them.",Need confirmation if applicable for CTP,True
+BRM-07,Mixing,Sequencing,Sequencing,"Related compounds together: Make related compounds continuously, e.g., IL3 and IL5 together.",Need confirmation if applicable for CTP,True
+BRM-08,Mixing,Sequencing,Sequencing,"Master Compound Sequencing – If a master compound has two corresponding final compounds, both final compounds should be scheduled consecutively.",Need confirmation if applicable for CTP,True
+BRM-09,Mixing,Sequencing,Sequencing,Same Compound should not be scheduled multiple times in a shift.,Need confirmation if applicable for CTP,True
+BRM-10,Mixing,Changeover,Mixing,Mixing department transitions shall always incur a fixed 2-minute changeover.,Need confirmation if applicable for CTP,True
+BRM-11,Mixing,Data Source,Machine Matrix,Use Plant-approved Allowable Machine Matrix.,"Need Priority matrix (P1,P2,P3..)",False
+BRM-12,Mixing,Data Source,Cycle time,Use Plant-approved Cycle time for Mixing section.,,False
+BRM-13,Mixing,Buffer,Buffer Logic,Always produce +5 extra batches to cover technical hold and quality issues.,But not for Special compounds (This will violate the MPQ logic),False
+BRE-01,Extrusion,Scheduling optimisation,Scheduling optimisation,"Sidewall (SW), Tread (TRD) production planning shall consider a rolling 24-hour Building demand horizon.",,False
+BRE-02,Extrusion,Scheduling optimisation,Scheduling optimisation,Same Die should not be repeated in a Shift (make all same Die -items at a time),,False
+BRE-03,Extrusion,Scheduling optimisation,Scheduling optimisation,Extruders –Schedule Item codes having same compound together (C/O Optimisation),,False
+BRE-04,Extrusion,Data Source,MPQ,Use Plant-maintained MPQ Master.,,False
+BRE-05,Extrusion,Data Source,Changeover Matrix,Use Machine-specific Changeover Matrix from Plant.,,False
+BRE-06,Extrusion,Machine Eligibility,Allowable Machines,Production shall only be assigned to machines approved in the Plant Allowable Machine Matrix.,,False
+BRB-01,Bead,Scheduling optimisation,Scheduling optimisation,"4 round of Beads should be scheduled together, same for 5 round",,False
+BRB-02,Bead,Scheduling optimisation,Scheduling optimisation,Same wire type should run continously,,False
+BR4RC-01,FRC,FRC & Wire,Sequencing,TL Chaffer and Nyl Chaffer – These should be planned towards the end of the fabric schedule and should not be planned together (Soft Constraint),,False
+BR4RC-02,FRC,FRC & Wire,Deep roll,Deep Roll Length – Deep roll length compliance and follow-up should be ensured during scheduling (Soft Constraint),,False
+BR4RC-03,FRC,FRC & Wire,Deep roll,"Wire Length Constraint – For wire-related components, the specified length should not be exceeded",,False
+BR4RC-04,FRC,FRC & Wire,Sequencing,Nyl Chaffer and WPJ Sequencing – Nyl Chaffer and WPJ should be scheduled consecutively (Soft Constraint),,False
+BR4RC-05,FRC,FRC & Wire,Sequencing,Before and After CAP66 - 15 mins of Changeover for Cleanout,,False
+BR4RC-06,FRC,FRC & Wire,Sequencing,CAP 66 after Wire campaign (Soft Constraint),,False
+BR4RC-07,FRC,FRC & Wire,Master Data,Use Changeover matrix provided by Plant team,,False
+BR4RC-08,FRC,FRC & Wire,Master Data,Use Line speed data provided by Plant team for FRC,,False
+BR4RC-09,FRC,FRC & Wire,MPQ,"Specified material roll length: Nychaffer, TLChaffer, Nylfiller and WPJ011: minimum 200m",,False
+BR4RC-10,FRC,FRC & Wire,Master Data,"During FRC production, the 240-minute creel setup shall execute in parallel.",,False
+BR4RC-11,FRC,FRC & Wire,Scheduling optimisation,"During creel setup, continue producing Fabric Mother Rolls if demand exists; otherwise remain idle.",,False
+BR4RC-12,FRC,FRC & Wire,Scheduling optimisation,Creel setup duration shall not be represented as a scheduling changeover.,,False
+BR4RC-13,FRC,FRC & Wire,Scheduling optimisation,"Ramp up for 2 mins, and Ramp down for 3 mins",,False
+BR4RC-14,FRC,FRC & Wire,Scheduling optimisation,Wire-to-wire transitions shall maintain a mandatory 6-hour separation based on campaign length and avoid it,,False
+BRIL-01,IL Calendering,Scheduling optimisation,Scheduling optimisation,Same Item code (IL) production planning shall consider a rolling 24-hour Building demand horizon.,,False
+BRIL-02,IL Calendering,Scheduling optimisation,Scheduling optimisation,Same Die/profile should not be repeated in a Shift (make all same Die -items at a time),,False
+BRIL-03,IL Calendering,Scheduling optimisation,Scheduling optimisation,TRC –Schedule Item codes having same compound together (C/O Optimisation),,False
+BRIL-04,IL Calendering,Data Source,MPQ,Use Plant-maintained MPQ Master.,,False
+BRIL-05,IL Calendering,Data Source,Changeover Matrix,Use Machine-specific Changeover Matrix from Plant.,,False
+BRIL-06,IL Calendering,Machine Eligibility,Allowable Machines,Production shall only be assigned to machines approved in the Plant Allowable Machine Matrix.,,False
+BRC-01,Cutters and Slitters,Scheduling optimisation,Scheduling optimisation,Belt 1 and Belt 2 of same SKU shall be scheduled together,,False
+BRC-02,Cutters and Slitters,Scheduling optimisation,Scheduling optimisation,Same Item Code shall be scheduled once in a shift,,False
+BRC-03,Cutters and Slitters,Data Source,Changeover Matrix,Use Machine-specific Changeover Matrix from Plant.,,False
+BRC-04,Cutters and Slitters,Machine Eligibility,Allowable Machines,Production shall only be assigned to machines approved in the Plant Allowable Machine Matrix.,,False

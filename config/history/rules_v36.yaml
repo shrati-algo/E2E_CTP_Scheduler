@@ -1,0 +1,84 @@
+# =====================================================================
+#  rules_v36.yaml - v35 + EVERY MIXING RULE OF MIXING_RULES_README.md
+#                   + plant machine names in every output
+#
+#  Everything in v35 is kept (PPDS-only data, cutters/slitters bypassed with
+#  transfer time, whole-unit lots, WIP at 22 Oct 07:00, master compound on
+#  hand, cap strip / edge gum first 8 h, never idle, finals on master mixers).
+#
+#  NEW: engine/mix_planner.py plans EVERY mixing lot first (README s.7) and
+#  fixes it; the dispatcher, right-shift and freshness repair never move a
+#  mixing lot; phase 5 runs 3 times (closed loop, README s.6).
+#
+#  Mixer ids (CTP_Machine_Master):   101 Mixer #1 (F270 M)  = README K270M
+#                                    102 Mixer #2 (F270 F)  = README F270
+#                                    103 Mixer #3 (F440 M)  = README F440
+#                                    104 Mixer #4 (K310 F)  = README K310
+#                                    105 Mixer #5 (K430-1 M)= README K430-1
+#                                    106 Mixer #6 (K430-2 M)= README K430-2
+# =====================================================================
+inherit_from: rules_v35.yaml
+
+meta:
+  run: e2e_v36
+  goal: "v35 + all mixing rules of MIXING_RULES_README.md + machine names"
+  data: "data-ppds-v36/"
+
+# ---- README s.2: bought-in compounds are never mixed ----------------------
+purchased_codes: ["TBA827", "TCA313", "MS43", "MS70", "MB100", "MTCM313"]
+
+# ---- README s.3: lot rules ----------------------------------------------
+# whole batches (lot_sizing.whole_units, v34), 5-batch minimum (engine.
+# mix_mpq_batches = 5, BRM-01), +5 buffer batches (BRM-13), sticky JT444 /
+# JT466 <= 3 batches (BRM-02) are inherited. BRM-13 now also skips these:
+mixing:
+  special_compounds: ["ML405", "ML605", "29MG"]
+
+mix_planner:
+  enabled: true
+  # ---- README s.4: coverage, repeat gap, one mixer per day --------------
+  cover_h: 15
+  cover_h_long: 24
+  gap_h: 15
+  gap_h_long: 24
+  long_items: ["IL3", "IL5", "B1144", "B186", "30G"]   # + every 4RC (901) feeder
+  fourrc_machine: "901"
+  gap_exempt: ["B99", "B1", "B2", "MB100", "MB200", "XMB98"]
+  shelf_margin_h: 2
+  # ---- README s.5.1: changeover / clean-out (largest applies, + 1 s) ------
+  changeover_s: 60
+  tr100_s: 300                 # BRM-06 master <-> final, TR100 (ASSUMPTION: 5 min)
+  cleanout_s: 120              # BRM-03 after butyl
+  final_cleanout_after_s: 120  # M9 after every final
+  k430_2_machine: "106"
+  k430_2_final_s: 120          # M4 a final on K430-2
+  # ---- README s.5.2: daily butyl blocks -----------------------------------
+  butyl_compounds: ["IL3", "IL5", "30G", "29MG", "ML405", "ML605"]
+  friendly_compounds: ["B99", "B1", "B2", "XMB98", "MB200", "MB100"]
+  butyl_campaigns: [["IL3", "IL5"]]          # no clean-out inside
+  butyl_gap_wait_h: 6
+  butyl_blocks:
+    - name: final
+      mixer: "102"                            # F270
+      friendly_before: ["B99", "B1", "B2"]
+      sequence: ["IL3", "IL5", "30G"]
+      friendly_after: []
+      prep_lot_batches: 5
+    - name: master
+      mixer: "106"                            # K430-2
+      earliest_hour: 17
+      friendly_before: ["XMB98", "MB200", "MB100"]
+      sequence: ["29MG", "ML405", "ML605"]
+      friendly_after: ["XMB98", "MB200", "MB100"]
+      prep_lot_batches: 5
+  # ---- README s.5.3 -------------------------------------------------------
+  compound_followers: {"ML405": "MK3", "ML406": "MK3"}   # BRM-05
+  # ---- README s.6: priority and timing -----------------------------------
+  max_wait_min: 15
+  fourrc_priority_h: 8
+  item_priority_h: {"B616M": 8, "B1144": 24, "B186": 24, "MB185": 24,
+                    "MB184": 24, "MB183": 24}
+  machine_factor: {"T638|106": 1.034}         # plant-measured, K430-2
+  closed_loop: {enabled: true, rounds: 3}
+  # ---- report only --------------------------------------------------------
+  final_target_batches_per_shift: 230

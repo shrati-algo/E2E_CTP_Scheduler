@@ -1,0 +1,32 @@
+# =====================================================================
+#  rules_v46b.yaml - v46a + TBR TDA WINDS AND APEXES IN LINE (option 1)
+#  The TBR TDA machines (2403/2404/2405) take bead wire + compound and give
+#  an apexed bead; winding and apexing run in parallel, so a bead takes as
+#  long as the SLOWER of the two (user decision, 2026-10-26).
+#    * TBR "BEAD WINDING" is bypassed like the cutters: no winding lot, no
+#      winding changeover; bead wire + S54 feed the apexed-bead lot directly.
+#    * each apexed-bead item runs at min(apexing rate, rate of the winding
+#      item its routing row names) - in this data the apexing rate.
+#  PCR is untouched: its winder (1201, dept "BEAD WINDING PCR") and apexers
+#  (201/202) stay separate steps.
+#  The list below REPLACES the inherited one (lists are not merged).
+# =====================================================================
+inherit_from: rules_v46a.yaml
+meta: {run: e2e_v46b, goal: "v46a + TBR TDA winding+apexing in line (slower step)", data: "data-ppds-v38/"}
+bypass_departments:
+  # PCR
+  - "CAP PLY SLITTER"
+  - "CUTTER"
+  - "CUTTING"
+  - "PLY CUTTER"
+  - "SLITTER"
+  # TBR
+  - "BELT CUTTER"
+  - "Bios cutter"
+  - "Chaffer Slitter"
+  - "TBR Body ply CUTTER"
+  - "BEAD WINDING"            # v46b: TBR TDA in line - PCR's is "BEAD WINDING PCR"
+tda_inline:
+  enabled: true
+  apex_departments: ["TBR APEXED BEAD ASSEMBLY"]
+  winding_departments: ["BEAD WINDING"]

@@ -1,0 +1,20 @@
+# =====================================================================
+#  rules_v44b.yaml - v44a + OPENING STOCK MATURITY TESTED PER DEMAND
+#
+#  Phase 2 tested "has this stock rested?" against ONE time per item - the
+#  first trolley that ever needs it - so stock mixed in the hours before the
+#  bell (TBR A1031 4,830 kg ready 07:30-08:08; first use 07:07) was thrown
+#  away for the whole plan (31k PCR / 16k TBR units, mostly final compound).
+#  Now each demand may use stock that has rested by its own use time
+#  (need_by + min aging); the first-use time stays as the floor and expiry is
+#  unchanged.
+# =====================================================================
+inherit_from: rules_v44a.yaml
+
+meta:
+  run: e2e_v44b
+  goal: "v44a + opening stock maturity per demand"
+  data: "data-ppds-v38/"
+
+wip:
+  maturity_per_demand: true

@@ -1,0 +1,36 @@
+# =====================================================================
+#  rules_v20.yaml - THE FLOOR AS IT STOOD AT 07:00 ON 29 SEP 2026
+#
+#  Same engine and same strict sourcing as v19. One thing changes, and it is
+#  a data decision rather than an algorithmic one: WHICH STRIKE of
+#  JK_CTP_PPDS.CTP_Opening_WIP the plan is netted against.
+#
+#  PPDS strikes that table at 06:30, 14:30 and 22:30 and keeps all three, so
+#  "the stock on 29 Sep" is three different numbers:
+#
+#      29 Sep 06:30   7,587 rows   160,910 units   newest produced 06:59:55
+#      29 Sep 14:30   8,266 rows   258,765 units   newest produced 14:28:51
+#
+#  The building plan starts at 29 Sep 07:00. The 14:30 strike already contains
+#  shift-A production - tyres the plan is itself scheduling - so netting against
+#  it credits the plant twice for the same work and flatters the result. The
+#  06:30 strike is the floor as the shift opened, and its newest batch was
+#  produced at 06:59:55, four seconds before the plan begins.
+#
+#  v19 used the latest strike. v20 pins the opening one. Everything else -
+#  strict database sourcing, the M/NOS unit bridge, the MPQ BOM bridge, the
+#  blocker register - is unchanged, so the difference in the result is the
+#  snapshot and nothing else.
+#
+#  Reproduce with:
+#      CTP_WIP_ASOF="2026-09-29 06:30:00" python engine/refresh_ctp_sql.py
+#      python engine/stage_wip_v6.py --split-from e2e_v20
+# =====================================================================
+inherit_from: rules_v19.yaml
+
+meta:
+  run: e2e_v20
+  goal: "net against the floor as it stood when the plan starts"
+  wip_snapshot: "JK_CTP_PPDS.CTP_Opening_WIP @ 2026-09-29, sync 06:30"
+  wip_rows: 7587
+  wip_units: 160910

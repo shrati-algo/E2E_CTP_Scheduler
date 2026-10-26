@@ -1,0 +1,11 @@
+# =====================================================================
+#  rules_v45b.yaml - v45a + CALENDER 901 QUEUES BY THE TROLLEY EACH LOT SERVES
+#  901 ran almost only TBR lots until 23 Oct 12:26 (deadline-first: TBR chains
+#  are longer, so TBR lots carry earlier deadlines) while PCR ECOPOLY350 - last
+#  part for 13 PCR day-1 trolleys - waited. Same rule as the bead machines
+#  (v44a): queue by the start of the trolley served, closest stage first.
+# =====================================================================
+inherit_from: rules_v45a.yaml
+meta: {run: e2e_v45b, goal: "v45a + 901 queues by trolley need", data: "data-ppds-v38/"}
+dispatch:
+  trolley_need_first_machines: ["2403", "2404", "2405", "901"]

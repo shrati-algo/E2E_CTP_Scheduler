@@ -1,0 +1,13 @@
+# =====================================================================
+#  rules_v45a.yaml - v44c_all + AGGREGATE BEAD GATE OFF (PCR correctness)
+#  The gate compared TOTAL apexed vs TOTAL newly wound per line, ignored
+#  wound-bead stock and slid apex lots later without re-laying the machine:
+#  81 overlapping lots on PCR apexing 201/202 in e2e_v44c_all, apex lots fed
+#  from stock held for unrelated winding (BA14006 ready 07:00, start 17:56).
+#  Each apex lot already waits for its OWN winding lots via the material links.
+#  New fatal check G1u: no upstream machine runs two lots at once.
+# =====================================================================
+inherit_from: rules_v44c_all.yaml
+meta: {run: e2e_v45a, goal: "v44c_all + aggregate bead gate off + G1u", data: "data-ppds-v38/"}
+bead_gate:
+  enabled: false

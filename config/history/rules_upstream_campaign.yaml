@@ -1,0 +1,30 @@
+# CAMPAIGN VARIANT — v10's frc_campaign + frc_aligned_needby, ported to CTP.
+# Same plan, same data, same 48 business rules as rules_upstream.yaml.
+# The only change is that calender/slitter lots are gathered into campaigns
+# and released as blocks, and upstream need-by is then re-aimed at that plan.
+inherit_from: rules_upstream.yaml
+meta:
+  run: e2e_v7
+  variant: "campaign release-schedule + aligned need-by (v10 port)"
+
+campaign:
+  enabled: true
+  # How far past the first lot's need-by a campaign may reach. Capped again,
+  # per item, by that item's OWN shelf life - so CAP 66 (24 h) can never be
+  # pulled as far forward as an inner liner (72 h).
+  lookahead_h: 48
+  # Hours of work one campaign may take. v10 bounds this because an unbounded
+  # campaign "emptied the window in one" and starved the next day.
+  max_campaign_h: 12
+  departments:
+    - CALENDERING
+    - CALENDARING
+    - CAP PLY SLITTER
+    - SLITTER
+    - Chaffer Slitter
+    - PLY CUTTER
+    - CUTTING
+    - BELT CUTTER
+    - TBR Body ply CUTTER
+    - Bios cutter
+    - BIAS CUTTER

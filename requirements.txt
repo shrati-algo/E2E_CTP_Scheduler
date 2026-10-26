@@ -1,0 +1,7 @@
+# Versions the v45b reference run was produced with (Python 3.13.5).
+pandas==2.3.1
+numpy==2.2.6
+openpyxl==3.1.5
+PyYAML==6.0.2
+# only needed to re-stage data from the PPDS database (engine/refresh_ctp_sql.py)
+PyMySQL==1.4.6

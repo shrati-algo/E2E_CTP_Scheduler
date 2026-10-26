@@ -1,0 +1,6 @@
+# v43b = v43a + TBR bead pool balance (2403/2404/2405, routing-allowed machines only)
+inherit_from: rules_v43a.yaml
+meta: {run: e2e_v43b, goal: "v43a + TBR bead pool balance", data: "data-ppds-v38/"}
+balance:
+  machines: ["2403", "2404", "2405"]
+  above_pct: 50

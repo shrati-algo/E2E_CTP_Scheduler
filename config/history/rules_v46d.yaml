@@ -1,0 +1,14 @@
+# =====================================================================
+#  rules_v46d.yaml - v46c (BOM v2) + EACH ITEM'S RECIPE COUNTED ONCE
+#  The BOM walk entered an item's recipe once per parent that reached it;
+#  the tree already holds the rows of every path, so a second parent added
+#  them all again (TBR B333 2x, B186 1.4x on BOM v2). `all` = made items and
+#  contracted (bought / bypassed) items are each entered once; BR-5 bias items
+#  keep the per-path descent. Checked offline: engine per-tyre = BOM row sum
+#  on all TBR (SKU, item) pairs; PCR differs only on 34 EG02/EG03 pairs whose
+#  rows are unreachable in BOM v2 itself (EGSL02/EGSL03 parent not linked).
+# =====================================================================
+inherit_from: rules_v46c.yaml
+meta: {run: e2e_v46d, goal: "v46c + each item's recipe counted once (BOM walk fix), BOM v2", data: "data-ppds-v38-bomv2/"}
+bom:
+  walk_each_item_once: all

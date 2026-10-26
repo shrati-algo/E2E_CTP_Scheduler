@@ -1,0 +1,5 @@
+# v42a = v41 + builder setup by actual predecessor (G1b) + line-prefixed building lot ids
+inherit_from: rules_v41.yaml
+meta: {run: e2e_v42a, goal: "v41 + builder setups follow the real predecessor", data: "data-ppds-v38/"}
+building:
+  setup_by_actual_predecessor: true

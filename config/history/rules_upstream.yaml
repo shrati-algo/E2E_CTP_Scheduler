@@ -1,0 +1,236 @@
+# =====================================================================
+#  rules_upstream.yaml — the CTP upstream run, governed by the plant's own
+#  `Upstream Business Rules.xlsx` (48 rules, 7 sections).
+#
+#  EVERY knob below carries the Rule ID it came from, so a number in the
+#  schedule traces back to a row of the plant's workbook.
+#
+#  THREE STATES, AND THEY ARE NOT THE SAME THING
+#    enabled: true   — implemented and ACTIVE in this run
+#    enabled: false  — the workbook says "Need confirmation if applicable for
+#                      CTP". NOT applied. Seven rules are in this state and
+#                      they are not silently assumed either way.
+#    (gap)           — the rule is accepted but CTP HAS NO DATA to implement
+#                      it. Listed under `unimplementable` with what is missing.
+#                      These are blockers, not omissions.
+#
+#  This file supersedes rules.yaml for the v6 run. BR-1..BR-5 from that file
+#  are carried forward where the workbook does not contradict them.
+# =====================================================================
+
+meta:
+  plant: CTP
+  source: "Upstream Business Rules.xlsx — Business Rules-Mixing, Stock (48 rules)"
+  plan: "plan-files/ctp_building_schedule_September_2026_{pcr,tbr}"
+  inventory: "jkplanning_CTP.opening_wip"
+  run: e2e_v6
+
+# ---------------------------------------------------------------- GENERAL
+general:
+  # BRG-02 "Use Material Aging data from SMART."
+  #   CTP's aging comes from jkt_aging_master_{line}. Whether that table IS the
+  #   SMART feed is unconfirmed — the DB has no provenance column. Treated as
+  #   the aging source; flagged in the report.
+  aging_source: jkt_aging_master
+  # BRG-03 / BRM-12 / BRE-04 / BRIL-04 "Use Plant-maintained MPQ Master."
+  mpq_source: jkt_mpq
+
+# ----------------------------------------------------------------- MIXING
+mixing:
+  # BRM-01 "MPQ = 5 Batches"  <- OVERRIDES the 3 in rules.yaml, which came
+  # from CTP's own jkt_mpq. The workbook is the plant's instruction and wins.
+  mpq_batches: 5
+  rule_id_mpq: BRM-01
+
+  # BRM-13 "Always produce +5 extra batches to cover technical hold and
+  # quality issues. But not for Special compounds (this would violate MPQ)."
+  buffer_batches: 5
+  buffer_excludes_special: true
+  rule_id_buffer: BRM-13
+
+  # BRM-02 "Sticky compounds (JT444, JT466) require 3 batch stacking, used in
+  # PCR sidewall." Stacking limits how many batches may sit together, so the
+  # lot is cut into multiples of 3.
+  sticky_stack_batches: 3
+  sticky_compounds: [JT444, JT466]
+  rule_id_sticky: BRM-02
+
+  # BRM-03 "Butyl compounds must be produced continuously. After these, only
+  # butyl-friendly compounds should be produced."
+  butyl:
+    enabled: true
+    rule_id: BRM-03
+    compounds: [ML405, ML605, 29Mg]
+    friendly_after: [MB100, MB200, XMB98]
+
+  # ---- the seven the workbook says to confirm. NOT APPLIED. --------------
+  pending_confirmation:
+    BRM-04:
+      enabled: false
+      rule: "Banbury K4 sequencing must consider before/after IL compound"
+    BRM-05:
+      enabled: false
+      rule: "After ML405 or ML406, MK3 compound needs to be produced"
+    BRM-06:
+      enabled: false
+      rule: "Same machine making master and final: TR100 as cleanout between"
+    BRM-07:
+      enabled: false
+      rule: "Make related compounds continuously, e.g. IL3 and IL5 together"
+    BRM-08:
+      enabled: false
+      rule: "Master with two finals: schedule both finals consecutively"
+    BRM-09:
+      enabled: false
+      rule: "Same compound should not be scheduled multiple times in a shift"
+    BRM-10:
+      enabled: false
+      rule: "Mixing transitions shall always incur a fixed 2-minute changeover"
+      # NOTE: this is the highest-value pending rule. CTP's changeover matrix
+      # prices NO mixer, so 1,235 mixer transitions currently cost 0 minutes.
+      # Confirming BRM-10 would replace every one of them with 2 min. Until
+      # then mixing setup is understated on the plant's binding constraint.
+      would_fix: "1,235 unpriced mixer transitions"
+
+# -------------------------------------------------------------- EXTRUSION
+extrusion:
+  # BRE-01 "SW, TRD production shall consider a rolling 24-hour Building
+  # demand horizon."
+  rolling_horizon_h: 24
+  rolling_applies_to: [SideWall, Tread]
+  rule_id_horizon: BRE-01
+  # BRE-03 "Schedule item codes having same compound together (C/O optimisation)"
+  group_by_compound: true
+  rule_id_group: BRE-03
+
+# --------------------------------------------------------- IL CALENDERING
+il_calendering:
+  # BRIL-01 same rolling 24-hour building horizon
+  rolling_horizon_h: 24
+  rolling_applies_to: [Inner Liner]
+  rule_id_horizon: BRIL-01
+  # BRIL-03 "TRC — schedule item codes having same compound together"
+  group_by_compound: true
+  rule_id_group: BRIL-03
+
+# --------------------------------------------------------------- FRC/WIRE
+frc:
+  # BR4RC-13 "Ramp up for 2 mins, and Ramp down for 3 mins"
+  ramp_up_min: 2
+  ramp_down_min: 3
+  rule_id_ramp: BR4RC-13
+
+  # BR4RC-10/11/12 "The 240-minute creel setup shall execute in parallel …
+  # shall NOT be represented as a scheduling changeover."
+  creel_setup_min: 240
+  creel_setup_parallel: true
+  creel_setup_is_changeover: false
+  rule_id_creel: BR4RC-10/11/12
+
+  # BR4RC-05 "Before and After CAP66 — 15 mins of changeover for cleanout"
+  cap66_cleanout_min: 15
+  cap66_items: ["CAP 66- slitted material", "CAP 66 - CAPSTRIP", CAP66]
+  rule_id_cap66: BR4RC-05
+
+  # BR4RC-09 "Specified material roll length: Nychaffer, TLChaffer, Nylfiller
+  # and WPJ011: minimum 200 m"
+  min_roll_m: 200
+  min_roll_items: [Nychaffer, TLChaffer, Nylfiller, WPJ011]
+  rule_id_min_roll: BR4RC-09
+
+  # BR4RC-14 "Wire-to-wire transitions shall maintain a mandatory 6-hour
+  # separation based on campaign length and avoid it"
+  wire_to_wire_gap_h: 6
+  rule_id_wire_gap: BR4RC-14
+
+  # Soft constraints — honoured in ORDERING only, never allowed to push a lot
+  # past its need-by. A soft rule that breaks the kit is not a rule.
+  soft:
+    BR4RC-01: "TL Chaffer and Nyl Chaffer late in the fabric schedule, not together"
+    BR4RC-04: "Nyl Chaffer and WPJ scheduled consecutively"
+    BR4RC-06: "CAP 66 after the wire campaign"
+
+# --------------------------------------------------- CUTTERS AND SLITTERS
+cutters:
+  # BRC-01 "Belt 1 and Belt 2 of same SKU shall be scheduled together"
+  belts_together: true
+  rule_id_belts: BRC-01
+  # BRC-02 "Same item code shall be scheduled once in a shift"
+  once_per_shift: true
+  rule_id_once: BRC-02
+
+# ------------------------------------------------------------------- BEAD
+bead:
+  # BRB-01 "4 round of Beads should be scheduled together, same for 5 round"
+  # BRB-02 "Same wire type should run continuously"
+  # Both need an attribute CTP does not carry — see `unimplementable`.
+  group_by_rounds: false
+  group_by_wire_type: false
+
+# =====================================================================
+#  RULES CTP HAS NO DATA FOR. These are BLOCKERS, not omissions — each
+#  names exactly what is missing. Nothing here is silently approximated.
+# =====================================================================
+unimplementable:
+  BRG-01:
+    rule: "No production or changeover on a machine during its PM/MTC block"
+    missing: "no PM / maintenance-downtime table exists in jkplanning_CTP"
+    effect: "every machine is treated as available 24x7; utilisation is optimistic"
+  BRM-11:
+    rule: "Use Plant-approved Allowable Machine Matrix (priority P1,P2,P3)"
+    missing: "the workbook itself asks for a priority matrix; CTP has none"
+    effect: "machine choice falls back to the routing's machine list, unranked"
+  BRE-02:
+    rule: "Same die should not be repeated in a shift"
+    missing: "no die / profile attribute on any CTP extrusion item"
+    effect: "die-based grouping not enforced"
+  BRIL-02:
+    rule: "Same die/profile should not be repeated in a shift"
+    missing: "same - no die master"
+    effect: "as above, for IL calendering"
+  BRB-01:
+    rule: "4-round beads scheduled together, same for 5-round"
+    missing: "no bead-round attribute on CTP bead items"
+    effect: "beads ordered by need-by only"
+  BRB-02:
+    rule: "Same wire type should run continuously"
+    missing: "no wire-type master for CTP (BTP has belt_wire_mapping; CTP does not)"
+    effect: "wire campaigns not formed"
+  BR4RC-02:
+    rule: "Deep roll length compliance"
+    missing: "no deep-roll master for CTP (BTP has 'Deep rolls from db.csv')"
+    effect: "deep-roll compliance unscored"
+  BR4RC-03:
+    rule: "Wire length constraint - specified length must not be exceeded"
+    missing: "no wire-length spec table"
+    effect: "wire length unbounded"
+
+# =====================================================================
+#  CARRIED FORWARD from rules.yaml (the workbook does not contradict these)
+#  BR-1 parallel rolls/bobbins · BR-2 chaffer x N strips
+#  BR-3 one cut = two belts   · BR-4 plant aging spec CTE0.06-FR.02
+#  BR-5 bias/bios cutter: child demand = child_quantity x bias output
+# =====================================================================
+inherit_from: rules.yaml
+
+# ------------------------------------------------------------ engine knobs
+engine:
+  open_h: 24
+  campaign_h: 72
+  policy: shift
+  flow_gap_h: 8
+  mix_window_h: 72
+  mix_mpq_batches: 5        # BRM-01
+  max_lot_h: 8
+  lead_shelf_fraction: 0.40
+  efficiency: 1.0
+  default_master_aging_h: 360
+  default_final_aging_h: 120
+  transfer_min: 10
+
+shared_machines:
+  joint: all
+
+changeover:
+  source_policy: matrix_only
+  unpriced_min: 0

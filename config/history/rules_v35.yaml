@@ -1,0 +1,26 @@
+# =====================================================================
+#  rules_v35.yaml - v34's logic on the UPDATED CTP_Master_BOM
+#
+#  Rules identical to v34 (cutters/slitters bypassed with transfer time = min
+#  ageing in between, whole-unit lots, final compound on master mixers, WIP at
+#  22 Oct 07:00, master compound on hand, cap strip / edge gum first 8 h, no
+#  machine idle). Only the BOM is re-read: data-ppds-v35/.
+#
+#  What the BOM update changed (vs data-ppds-v33, measured 2026-10-23):
+#    * the per-alternative-machine copies are gone at source - PPDS now holds
+#      47,708 PCR / 80,819 TBR rows, exactly the rows the conversion kept;
+#    * PCR: 24,807 quantities moved in the 4th decimal (<= 0.6 %);
+#    * TBR: 46,973 quantities changed; under master compounds many raw-material
+#      and some master-compound edges are now EXACTLY 1/2, 1/4 or 1/16 of the
+#      previous value - consistent with the alternatives' quantity being split
+#      while only one row was kept. Every changed TBR edge is a raw material or
+#      master compound, both on hand in this run, so the schedule is unaffected
+#      - but a run that MAKES master compound would under-mix by 2-16x.
+#    * no SKU, edge or item type added or removed; cap strip still `CAP 66`.
+# =====================================================================
+inherit_from: rules_v34.yaml
+
+meta:
+  run: e2e_v35
+  goal: "v34 logic on the updated CTP_Master_BOM"
+  data: "data-ppds-v35/"
