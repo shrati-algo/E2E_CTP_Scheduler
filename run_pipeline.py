@@ -24,7 +24,7 @@ INPUTS
 
 DATABASE (read-only)
   Credentials come ONLY from environment variables CTP_DB_HOST, CTP_DB_PORT,
-  CTP_DB_USER, CTP_DB_PASSWORD, CTP_DB_NAME, CTP_PPDS_NAME - or from a local
+  CTP_DB_USER, CTP_DB_PASSWORD, CTP_PPDS_NAME - or from a local
   file `db.env` in the repository root (KEY=VALUE lines, git-ignored; see
   db.env.example). Nothing is ever written to the database.
 
@@ -201,7 +201,8 @@ def load_db_env() -> None:
 
 
 def db_ready() -> list:
-    return [k for k in ("CTP_DB_HOST", "CTP_DB_USER", "CTP_DB_PASSWORD", "CTP_DB_NAME")
+    # every table is read from CTP_PPDS_NAME (--ppds-only); CTP_DB_NAME is not needed
+    return [k for k in ("CTP_DB_HOST", "CTP_DB_USER", "CTP_DB_PASSWORD")
             if not os.environ.get(k)]
 
 

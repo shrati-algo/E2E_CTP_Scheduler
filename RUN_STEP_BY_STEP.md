@@ -21,9 +21,9 @@ pip install -r requirements.txt
 
 ## 3. Give the database login (once)
 
-Copy `db.env.example` to `db.env` in the same folder and fill in host, user, password and the login database. `db.env` is git-ignored, so it never leaves your machine.
+Copy `db.env.example` to `db.env` in the same folder and fill in host, user and password. `db.env` is git-ignored, so it never leaves your machine.
 
-You can set the same names as environment variables instead (`CTP_DB_HOST`, `CTP_DB_PORT`, `CTP_DB_USER`, `CTP_DB_PASSWORD`, `CTP_DB_NAME`, `CTP_PPDS_NAME`).
+You can set the same names as environment variables instead (`CTP_DB_HOST`, `CTP_DB_PORT`, `CTP_DB_USER`, `CTP_DB_PASSWORD`, `CTP_PPDS_NAME`).
 
 The scheduler only **reads** from `JK_CTP_PPDS`; it never writes.
 

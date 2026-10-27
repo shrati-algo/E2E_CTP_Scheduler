@@ -72,7 +72,7 @@ import pandas as pd
 
 import ctpsql
 
-PLANNING = ctpsql.CFG["database"]          # jkplanning_CTP
+PLANNING = ctpsql.CFG["database"] or "jkplanning_CTP"   # not read with --ppds-only
 PPDS = ctpsql.PPDS_DB                      # JK_CTP_PPDS
 
 # ---------------------------------------------------------------- planning only
