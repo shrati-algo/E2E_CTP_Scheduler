@@ -88,6 +88,7 @@ def main() -> int:
     ap.add_argument("--out", default="CTP_27SEP-01OCT_SCHEDULE_v15.xlsx")
     a = ap.parse_args()
     D = io.OUT_ROOT / a.run
+    LN = io.scheduled_lines(a.run)
 
     print("\n" + "=" * 84)
     print(f"  CTP SCHEDULE BOOK - plant format   [{a.run}]")
@@ -95,7 +96,7 @@ def main() -> int:
 
     # ------------------------------------------------------------ gather
     cure, build, floor, dayg, dayc = {}, {}, {}, {}, {}
-    for ln in ("pcr", "tbr"):
+    for ln in LN:
         cure[ln] = pd.read_csv(D / ln / "phase7_curing_plan.csv",
                                parse_dates=["planned_start", "planned_end",
                                             "gt_ready", "feasible_start",
@@ -125,7 +126,7 @@ def main() -> int:
     #             rounds them.
     bld_gen: dict = {}
     cur_gen: dict = {}
-    for ln in ("pcr", "tbr"):
+    for ln in LN:
         f = floor[ln]
         dep = f["department"].astype(str)
         for r in f[dep == "BUILDING"].itertuples(index=False):
@@ -141,7 +142,7 @@ def main() -> int:
 
     # ---------------------------------------------------------- 1 Summary
     srows = []
-    for ln in ("pcr", "tbr"):
+    for ln in LN:
         b, c = build[ln], cure[ln]
         bp = float(b["qty"].sum())
         bd = float(b.loc[b["within_horizon"], "qty"].sum())
@@ -172,7 +173,7 @@ def main() -> int:
 
     # -------------------------------------------------- 2 Daily PCR TBR
     drows = []
-    for ln in ("pcr", "tbr"):
+    for ln in LN:
         g = dayg[ln].set_index(dayg[ln].columns[0])
         c = dayc[ln].set_index(dayc[ln].columns[0])
         for day in sorted(set(g.index) | set(c.index)):
@@ -191,7 +192,7 @@ def main() -> int:
 
     # ---------------------------------------------------- 3 Curing schedule
     crows = []
-    for ln in ("pcr", "tbr"):
+    for ln in LN:
         c = cure[ln].copy()
         rt = io.load_routing(ln)
         ci = io.cure_index(rt)
@@ -244,7 +245,7 @@ def main() -> int:
 
     # -------------------------------------------------- 4 Building schedule
     brows = []
-    for ln in ("pcr", "tbr"):
+    for ln in LN:
         for r in build[ln].itertuples(index=False):
             brows.append({
                 "line": ln.upper(),
@@ -266,7 +267,7 @@ def main() -> int:
     _write(ws, bs)
 
     # ------------------------------------------------------------ 5 Sheet1
-    fl = pd.concat([floor[ln].assign(line=ln.upper()) for ln in ("pcr", "tbr")],
+    fl = pd.concat([floor[ln].assign(line=ln.upper()) for ln in LN],
                    ignore_index=True)
     fl["day"] = fl["start_time"].map(
         lambda t: io.plant_day(t).date() if pd.notna(t) else None)
@@ -324,7 +325,7 @@ def main() -> int:
 
     # ------------------------------------------------------ 7 Assumptions
     arows = []
-    for ln in ("pcr", "tbr"):
+    for ln in LN:
         for f, stage in ((f"{ln}/phase0_assumptions.csv", "phase 0 - masters"),
                          (f"{ln}/phase3_assumptions.csv", "phase 3 - lot sizing")):
             p = D / f

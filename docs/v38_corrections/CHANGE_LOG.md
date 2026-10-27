@@ -31,6 +31,12 @@ All versions use the same input data (`data-ppds-v38`) and the same October plan
 | v46c (trial) | v46b with the BOM from `CTP_Master_BOM_v2` (cutters / slitters already removed); transfer time from the routing | 134,476 = 83.2% (vs v46b: PCR +5,858, TBR +52), **but not comparable**: see entry (v2 fixes a double-count on PCR, drops real TBR steps) | all 21 checks pass |
 | v46d (candidate on BOM v2) | v46c + engine fix: each item's recipe counted once in the BOM walk | **136,470 = 84.4%** (vs v46c: PCR +1,164, TBR +830); engine per-tyre = BOM row sum on every TBR pair | all 21 checks pass |
 | v46e (candidate on BOM v2) | v46d + 4-roll calender lots in whole dips (`CTP_Master_FRC`), each run covering up to the shelf window; partial dip when one dip would expire | **139,418 = 86.2%** (vs v46d: PCR +2,940, TBR +8); 901 lots 127 → 65, changeover 69.9 → 36.3 h | all 21 checks pass |
+| v46f (CAP 66 made) | v46e on the corrected routing / BOM v2 (27 Oct): CAP 66 made on 901 from B616M + fabric; its three assumptions removed | 132,996 = 82.3% (vs v46e: PCR −6,422, TBR 0); CAP 66 is the last part for 100 PCR trolleys | all 21 checks pass |
+| **v46g (candidate)** | v46f + 901 campaign pick judged by trolley need, not stale LFT | **142,424 = 88.1%** (vs v46e: PCR +3,038, TBR −32); CAP 66 last part for 11 trolleys | all 21 checks pass |
+| v46h | v46g + CAP 66 stock turned into mother roll by MHE code (FAB ×1, STL ×0.1 **assumed**, cap strip ×0.00647 from master BOM) | 142,424 = 88.1% (unchanged: the 22 Oct A stock is all FAB) | all 22 checks pass |
+| v46i (**new plan**) | v46h rules on `plan-27oct/` (27–31 Oct) with 27 Oct shift A stock + green tyres; stock split also reads the pre-v2 BOM (keeps cut stock) | **60,134 of 74,422 = 80.8%** (PCR 50,592 = 82.9%, TBR 9,542 = 71.3%); not comparable with the rows above (different plan) | all 22 checks pass |
+| v46j | v46i + machines and speeds per machine from `CTP_Master_Routing_v2.all_machine_spec`; no speed assumptions (missing speed = blocker B06) | PCR **48,968 of 60,184 = 81.4%**; **TBR fully blocked** (1802 / 2201 have no speed) | all checks pass |
+| **v46k (on v46i)** | v46i + SNCT001–003 / BCFT002 cut stock converted to BRTTL (width from the BOM, pre-cut rolls as alternatives: **open issue**), cut code sent to the line that cuts it | **60,700 of 74,422 = 81.6%** (+566 vs v46i; PCR 83.6%, TBR 72.3%); TBR BRTTL on 901 4,379 → 2,916 m | all 22 checks pass |
 
 Why the number went down slightly: v38 and v39 counted time that did not exist (trolleys finishing too early, presses changing moulds in 0 minutes). The lower numbers are the true ones.
 
@@ -730,6 +736,8 @@ The PCR cold-start story is collected in [PCR_COLD_START.md](PCR_COLD_START.md).
 
 ---
 
+> **How "built per day" is counted (checked 27 Oct).** The official report `FULFILMENT_DAYWISE_v15.csv` counts each trolley **once, on the plant day it finishes** (`feasible_end`). The day-by-day "built" rows in the v46a–v46e entries below were counted by **start** time (`feasible_start`). Totals are identical either way and nothing is double-counted, but counting by start credits a trolley to the day it began. In v46e, 87 PCR trolleys (33,634 tyres) and 43 TBR trolleys (5,049 tyres) start on one plant day and finish on the next. Counted on completion, v46e builds PCR 1,841 / 9,387 / 15,322 and TBR 528 / 1,857 / 3,260 on days 1 / 2 / 3.
+
 ## v46a: cut and slit stock counted as the material it was cut from
 
 ### What was wrong
@@ -988,6 +996,350 @@ The plant runs the calender **in dips**. One full dip of steel cord or fabric ha
 * **PCR days 1–2 dip slightly** (−562 / −2,270), because one long dip run finishes later than the first of several small lots. Day 3 more than makes up for it (+4,929). Progressive release (v43g) still frees each trolley's share as it is made.
 * **Partial dips are common (42 of 65 lots).** Most are on low-demand steel cords (CPJ120, CPJ370, CPJ121, CWBHTCP100, CP31151, CWBHI34, CWCH30256), where one full dip lasts 5–28 days but the shelf life is 3–4 days.
 * **Limitation: each line is sized separately.** Rolls used by both lines (CWBHTCP100, BRTTL) get their own runs per line, not one shared dip.
+
+---
+
+## v46f: CAP 66 made on calender 901 (27 Oct)
+
+**Why:** in v46e CAP 66 (cap strip mother roll) was never made. The BOM called it `CAP 66`, but the routing only had `CAP 66-MOTHERROLL`, so the engine skipped it. Its compound B616M and nylon fabric went straight into every PCR tyre kit, 901 never ran cap strip, and the 3,853 m of CAP 66 stock was never used. The routing has now been corrected in `JK_CTP_PPDS.CTP_Master_Routing`: the 901 step is `routed_product = CAP 66`.
+
+**What changed:**
+
+| | |
+|---|---|
+| Data | `data-ppds-v38-bomv2-cap66/` = the v46e folder with BOM v2 and routing restaged from the database on 27 Oct. Routing: only `CAP 66-MOTHERROLL` → `CAP 66` (221 rows). BOM v2: only the `grand_parent` label of the cap strip rows (not used by the engine). Opening stock and everything else as v46e |
+| Rules | `config/rules_v46f.yaml` (inherits v46e) |
+| Engine | `phase2_wip_netting.py`: rule `assumptions.absent_type_skip_stocked_codes` (list of codes). `make_validation_result.py`: the "cap strip codes differ" gap is listed only for codes the routing still doesn't route |
+
+**CAP 66 assumptions removed:**
+
+| Assumption | What it did | Now |
+|---|---|---|
+| BR-1 roll table `CAP 66: 11` | ran 901 at 31 × 11 = 341 m/min | CAP 66 single-strand, 31 m/min from the routing. The BOM gives 0.47 m of CAP 66 per tyre holding 0.65 kg; that is a full-width sheet (~1.6 m = 11 × 144 mm), not one strip, so the metres are already sheet metres |
+| A-WIP-1 (24 h assumed cover) | CAP 66 stock rows have a blank `item_type`, so the type looked absent and 3,919 m of stock was invented | not granted for CAP 66; only its 13 real rolls (3,853 m) are used |
+| A-WIP-2 (first 8 h on hand) | 1,462 m invented for the first 8 h | the CAP 66 codes are taken off the list (CAP30, GBCAP20, edge gum unchanged) |
+| "Assumed purchased" | `CAP 66` listed as infinitely available | gone: CAP 66 is made |
+
+**Result:**
+- CAP 66 is made in 5 lots (43,200 m) at 31 m/min. B616M now feeds only CAP 66, not the kit.
+- 901 run time is 106.6 h → 133.1 h for both lines.
+- PCR cured **108,962** (−6,422); TBR unchanged.
+- The loss is on 24 Oct: PCR built 6,912 tyres instead of 15,350, because the first CAP 66 lot only ran on 24 Oct 20:48, 55 h after its first trolley needed it.
+
+**Why the first lot was so late (found with a 901 dispatch log, run `e2e_v46f_dbg901`):**
+- B616M for it was ready on 23 Oct 07:19.
+- 901 then chose 12 other lots first, mostly TBR steel cord lots needed 24–28 Oct.
+- The 901 campaign pick (v43) ranks by the phase-4 LFT. Once every lot is overdue, that LFT is stale: TBR cord lots carried an earlier LFT than CAP 66 even though their trolleys needed them days later.
+- The pick also prefers the same line as the last lot, so TBR followed TBR.
+
+## v46g: 901 campaign pick by trolley need (27 Oct)
+
+**What changed:** rule `campaign.urgency_by_trolley_need: true` (`config/rules_v46g.yaml`). On 901, the campaign hold-break and the campaign pick measure urgency by **when the lot's trolleys need it**, the same key the v45b queue uses. They fall back to LFT only where a lot has no trolley. Engine: `phase5_placement.py` (`_urg`).
+
+**Result (both lines):**
+
+| | v46e | v46f | v46g |
+|---|---|---|---|
+| PCR cured | 115,384 | 108,962 | **118,422** |
+| TBR cured | 24,034 | 24,034 | 24,002 |
+| **Both** | 139,418 (86.2%) | 132,996 (82.3%) | **142,424 (88.1%)** |
+| CAP 66 lots on 901 | 0 | 5 | 5 |
+| PCR trolleys whose last part is CAP 66 | 0 | 100 | 11 |
+| 901 run time (h) | 106.6 | 133.1 | 133.1 |
+
+- The first CAP 66 lot now runs on 23 Oct 17:15, not 24 Oct 20:48.
+- PCR builds 14,915 tyres on 23 Oct (v46f: 8,647) and 15,003 on 24 Oct (v46f: 6,912).
+- v46g is higher than v46e even though it now does the 901 work v46e skipped, because the pick fix helps every 901 item, not only CAP 66.
+- TBR −32 tyres: TBR cord lots that used to jump the queue now wait for their turn.
+
+**Still open:**
+- **Inner liners:** 24 PCR inner-liner codes (IL002, IL056, …) have the same blank `item_type` in the stock feed and still get A-WIP-1 assumed cover on top of real stock. They were left as in v46e on purpose. List them in `absent_type_skip_stocked_codes` to stop it, or fill `item_type` in `CTP_Opening_WIP`.
+- **Leftover routing rows:** the cap ply slitter step still reads `CAP 66-MOTHERROLL`, and building still asks for `CAP 66 - CAPSTRIP`. Both are bypassed slitter rows, so there's no effect. CAP30 / GBCAP20 are fixed only in `CTP_Master_Routing_v2`.
+
+**How to run:**
+```bash
+python run.py --pcr "plan-latest/ctp_building_schedule_October_2026_pcr 26.xlsx"   --tbr "plan-latest/ctp_building_schedule_October_2026_tbr 27.xlsx"   --pcr-curing "plan-latest/ctp_curing_schedule_October_2026_pcr 26.xlsx"   --tbr-curing "plan-latest/ctp_curing_schedule_October_2026_tbr 27.xlsx"   --run e2e_v46g --rules config/rules_v46g.yaml --data data-ppds-v38-bomv2-cap66 --plan-dir plan-e2e_v46g
+```
+
+---
+
+## v46h: CAP 66 stock turned into mother roll by its MHE code (27 Oct)
+
+**Why:** the stock feed books every CAP 66 row as item code `CAP 66`, but the material can be in three forms. Only the `mhe_code` column says which. Counting a metre of cap strip as a metre of mother roll would overstate the stock about 150 times.
+
+**What changed:**
+- Rule `wip.mhe_conversion` (`config/rules_v46h.yaml`). Before netting, each CAP 66 stock row becomes mother-roll metres (`CAP 66`, made on 901):
+
+  | MHE code | Form | 1 m of stock = | Factor from |
+  |---|---|---|---|
+  | `4RC/FAB/nnn` | mother roll (4-roll calender) | 1 m | same item |
+  | `4RC/STL/nnn` | slitted material / pre-cap strip (`CAP 66-MOTHERROLL`) | **0.1 m** | **ASSUMED: 10 m slitted = 1 m mother roll** (user, 27 Oct). No BOM has this step |
+  | empty | 10 mm cap strip (`CAP 66 - CAPSTRIP`) | 0.00647 m | `CTP_Master_BOM`, same on all 221 SKUs |
+
+  An MHE kind not in the rule is kept as is and goes to the blocker register.
+- Engine: `phase2_wip_netting.py` (`mhe_stock_to_item`). Per-row report: `outputs/e2e_v46h/pcr/phase2_mhe_conversion.csv`.
+- Staging: the stock extract now selects `mhe_code` (`refresh_ctp_sql.py`, `stage_wip_ppds.py`). New `engine/stage_wip_mhe.py` adds it to stock that is already staged, matched on (production_id, sync time); every one of the 1,775 rows matched. Data: `data-ppds-v38-bomv2-cap66-mhe/` = v46g data + that column.
+
+**Result:** **unchanged from v46g: 142,424 = 88.1%** (PCR 118,422, TBR 24,002). The PCR building plan is byte-identical. All 22 schedule checks pass. The reason: on 22 Oct shift A, all 13 CAP 66 rows (3,853.5 m) are FAB, i.e. already mother roll.
+
+**Where it starts to matter:** later snapshots hold the other forms. 27 Oct shift A has 28 FAB rows (8,457.1 m), 1 STL row (315.0 m → 31.5 m) and 1 cap strip row (150.9 m → 0.98 m). The assumed STL factor accounts for 0.4% of that CAP 66 stock.
+
+**Open (data owner):** put the `CAP 66-MOTHERROLL` → `CAP 66` metre ratio in the BOM, and rename the routing code (the routing calls the slitter output "MOTHERROLL", the BOMs call the calender output "MOTHER ROLL"). See [ITEM_CODE_MISMATCHES.md](ITEM_CODE_MISMATCHES.md) §1a.
+
+**How to run:**
+```bash
+python run.py --pcr "plan-latest/ctp_building_schedule_October_2026_pcr 26.xlsx"   --tbr "plan-latest/ctp_building_schedule_October_2026_tbr 27.xlsx"   --pcr-curing "plan-latest/ctp_curing_schedule_October_2026_pcr 26.xlsx"   --tbr-curing "plan-latest/ctp_curing_schedule_October_2026_tbr 27.xlsx"   --run e2e_v46h --rules config/rules_v46h.yaml --data data-ppds-v38-bomv2-cap66-mhe --plan-dir plan-e2e_v46h
+```
+
+---
+
+## Repository: v46k, run from the plan folder alone (28 Oct)
+
+**What changed:** the GitHub repository `E2E_CTP_Scheduler`, branch `v46k-plan-folder-pipeline`, now runs v46k with one command:
+
+```bash
+python run_pipeline.py --plan-folder <plan folder>
+```
+
+**What `run_pipeline.py` does by itself:**
+- reads the plan start;
+- takes stock and green tyres from the **shift-A (06:30) sync of the plan's first day**;
+- stages every master from `JK_CTP_PPDS` (the same tables as v46k) into `data/ppds_<day>/`;
+- splits the stock by the plan's own demand;
+- runs everything.
+
+Credentials come only from environment variables or a git-ignored `db.env`.
+
+**Engine changes:**
+- `refresh_ctp_sql.py --skip` leaves out the two unread live-inventory tables.
+- The "stale stock" note is no longer raised for a snapshot of the plan's own start day.
+
+**Check:** on `plan-27oct`, the plan-folder-only run gives **60,700 of 74,422 = 81.6%**, identical to v46k. 106 of 110 output items are identical; the rest is run identity and two diagnostic columns. Details: the repository's `docs/REPO_VERIFICATION.md`.
+
+---
+
+## Report: day 1 — stock on the rack vs building (27 Oct, on v46k)
+
+**What changed:** only a report. The schedule is the same. New `engine/make_day1_wip_building_report.py` → `outputs/<run>/DAY1_WIP_VS_BUILDING_<run>.xlsx`, covering every day-1 trolley and every kit part.
+- Sheets **Fresh parts by trolley** and **Fresh parts detail**: every part made fresh for each day-1 trolley, the lot and machine that make it, when it is ready, and how many hours it holds the trolley.
+- Ready time = the lot's finish (or its progressive share on 901) + the part's minimum ageing + transfer. This matches the engine's own `kit_ready` exactly on all 65 last parts.
+
+**Findings** (details in [DAY1_WIP_VS_BUILDING_v46k.md](DAY1_WIP_VS_BUILDING_v46k.md)):
+- **Share of each kit from stock:** PCR 62% of kit part lines; TBR 79%.
+- **Complete kits from stock:** PCR 6 of 44 trolleys; TBR 2 of 29.
+- **On time:** PCR 4 trolleys; TBR 0.
+- **Why trolleys are late:** a part made fresh (PCR 21, TBR 11), or the builder still busy with its previous late trolley (PCR 19, TBR 18).
+- **Why stock does not cover the rest:**
+  - mostly the rack holds less than day 1 needs: 70 / 100 PCR and 32 / 46 TBR kit items;
+  - ⚠️ **engine:** on PCR, fabric rolls ready before the trolley's start are refused, because stock must rest by start − 24 h buffer. They go to later days, and 6 trolleys wait for fresh rolls from 901 (2,788 m);
+  - some stock expired before 07:00 (PCR treads / bead apexes);
+  - no stock at all for TPA-011, TR5054, TR5071.
+
+---
+
+## v46k: the BRTTL family of cut stock converted (SNCT001–003, BCFT002), built on v46i (27 Oct)
+
+**Starting point:** v46i: the same plan (`plan-27oct/`), stock (27 Oct shift A), BOM v2 and routing (`CTP_Master_Routing`, proc_time). **v46j's machine-wise speeds are not used.**
+
+**Why:** in v46i, 12,432 m of TBR chafer stock (`SNCT001`–`003`) and 266 m of `BCFT002` were never turned into BRTTL, so 901 calendered 4,379 m of BRTTL that the stock already covered. The old master BOM shows the chain: SNCT → pre-cut roll BCFT00x → **BRTTL**.
+
+**What changed** (`config/rules_v46k.yaml`; engine `phase2_wip_netting.py` and `stage_wip_v6.py`):
+
+1. **Width taken from the BOM** (`wip.cut_width_from_bom`). The SNCT stock is in M; the BOM states SNCT in M². The same SKU lists the code as a child in M and as a parent in M², which gives the width:
+   - SNCT001: **0.140 m²/m** (all 195 SKUs);
+   - SNCT002: **0.100** (median of 175);
+   - SNCT003: **0.496** (median of 41).
+
+   Stock then goes m → m² → BCFT → BRTTL, using the same bias-cutter ratios (BR-5) as BCFT001 / 003 / 004.
+2. **Alternatives** (`wip.alternative_children: [SNCT001, SNCT003]`). SNCT001 lists 3 pre-cut rolls (BCFT001 / 002 / 005); SNCT003 lists 2 (BCFT001 / 003). They are taken as **alternatives**: one roll's path, the lower BRTTL figure. ⚠️ **OPEN ISSUE: the plant must confirm whether they are alternatives or all used together.** If all used together, SNCT001 and SNCT003 give about 2–3× the BRTTL.
+3. **TBR BCFT002 treated as bias-cut stock** (`wip.extra_cut_codes: {tbr: {BCFT002: bias}}`). The TBR BOM has BCFT002 → BRTTL, but the TBR routing has no BCFT002 row.
+4. **A cut code goes to the line that cuts it** (`stage_wip_v6.py --cut-to-cutting-line`). Stock of a cut code no line demands now goes wholly to the line whose routing cuts it, not 50/50. On this snapshot only **BCFT002 moves: all 532 m go to PCR**. The feed's own `tyre_type` for it is PCR, even though it sits on rack `TBR/BCR/...`.
+
+**Conversion now** (0 cut / slit batches kept unconverted on either line):
+
+| Line | Stock | Batches | Cut stock | → BRTTL | BRTTL used |
+|---|---|---|---|---|---|
+| TBR | SNCT001 | 21 | 6,005 m | 700.2 m | 700.2 |
+| TBR | SNCT002 | 27 | 3,397 m | 125.9 m | 110.7 |
+| TBR | SNCT003 | 11 | 3,030 m | 928.5 m | 652.7 |
+| PCR | BCFT002 | 2 | 532 m (was 266) | 75.8 m | 75.8 |
+| TBR | BCFT001 / 003 / 004 (unchanged) | 13 | 3,850 m | 972.3 m | 931.9 |
+
+**BRTTL:**
+- TBR BRTTL from stock: 2,618 → **4,081 m**. Calendered on 901: **4,379 → 2,916 m**.
+- PCR BRTTL still made: 152 → 114 m.
+
+**Result:**
+
+| | v46i | v46k |
+|---|---|---|
+| PCR cured | 50,592 (82.9%) | **51,020 (83.6%)** |
+| TBR cured | 9,542 (71.3%) | **9,680 (72.3%)** |
+| **Both** | 60,134 (80.8%) | **60,700 (81.6%)**, +566 |
+| Built | 70,975 (94.6%) | 71,781 (95.7%) |
+
+All 22 schedule checks pass. Exit code 1 is the machine-coverage check only, as in v46i. Stock report: `outputs/e2e_v46k/WIP_PRESENCE_VS_CONSUMPTION_e2e_v46k.xlsx`.
+
+**Data:** `data-ppds-v38-bomv2-27oct-k/` = v46i data re-split with:
+```bash
+cd engine && CTP_DATA=../data-ppds-v38-bomv2-27oct-k CTP_RULES=../config/rules_v46k.yaml python stage_wip_v6.py --split-from e2e_v46i --also-bom data-ppds-v38 --cut-to-cutting-line
+```
+
+**How to run:**
+```bash
+python run.py --pcr "plan-27oct/ctp_building_schedule_October_2026_pcr 38.xlsx" --tbr "plan-27oct/ctp_building_schedule_October_2026_tbr 39.xlsx" --pcr-curing "plan-27oct/ctp_curing_schedule_October_2026_pcr 38.xlsx" --tbr-curing "plan-27oct/ctp_curing_schedule_October_2026_tbr 39.xlsx" --run e2e_v46k --rules config/rules_v46k.yaml --data data-ppds-v38-bomv2-27oct-k --plan-dir plan-e2e_v46k
+```
+
+---
+
+## v46j: machine-wise speeds from `CTP_Master_Routing_v2.all_machine_spec`, no speed assumptions (27 Oct)
+
+**What changed:** where speeds come from. Same plan (`plan-27oct/`), same stock (27 Oct shift A) and same BOM as v46i.
+
+| | before (v46i) | v46j |
+|---|---|---|
+| Speed | `proc_time` of `CTP_Master_Routing`, one per item | **`CTP_Master_Routing_v2.all_machine_spec`, one per machine** |
+| Machines an item may use | old routing (+ finals on master mixers by rule) | **the machines the spec gives a speed for** |
+| Lot time | at the item's rate | **at the speed of the machine it is placed on**; mixers by their own cycle and batch weight |
+| No speed | department median (assumption A02), machine pool (A01) | **data blocker B06**; the SKU is DATA_BLOCKED and not scheduled |
+| Plant mixing factor `T638|106` | 1.034 | 1.0 (the spec states each mixer's cycle) |
+
+**Engine:**
+- `stage_routing_spec.py` (new) stages the table verbatim, read-only, to `jkt_routing_spec_{pcr,tbr}.csv`.
+- `ctpio.py`: `load_machine_spec`, `_apply_machine_spec` and `machine_duration_min`.
+  - Spec machine keys are resolved through `CTP_Machine_Master`: `F270 F` → 102, `0201` → 201.
+  - The TDA in-line rule uses spec winding speeds per machine.
+  - `apply_assumptions` gives no A01/A02 to an item with no speed.
+- `rules.py`: BR-1 roll multipliers still scale the spec's base speed (EG02 12 × 11).
+- `blocker_policy.py`: new **B06**. `phase0_validate.py` raises it.
+- `phase1`: B06 SKUs are not scheduled. `run_all.py`: a line with no eligible demand stops after phase 0.
+- Re-timing: `phase4b` / `phase5` / `mix_planner.py` use per-machine speeds and per-mixer times.
+- Reports handle a stopped line: `validate_floor_schedule.py` checks legality against the spec's machines; the fulfilment, validation and workbook reports also changed.
+- New `make_machine_speed_report.py` → `MACHINE_SPEED_GAPS.xlsx`, run by `run.py` step 10.
+
+Rules: `config/rules_v46j.yaml`. Data: `data-ppds-v38-bomv2-27oct-spec/` = v46i data + `jkt_routing_spec_*`.
+
+**Data blockers (no assumption taken). Full list in [MACHINE_SPEED_GAPS_v46j.md](MACHINE_SPEED_GAPS_v46j.md):**
+- **TBR, every SKU blocked.** All 20 need `BEF001` (BEF extruder **1802**) and a pre-assembly `TPA-…` (super assembly **2201**). `all_machine_spec` is empty for every item on those two machines. TBR is therefore not scheduled: 18,074 cure-plan tyres excluded (20 SKUs B06 + 3 SKUs B01).
+- **PCR, 1 SKU blocked** (`1325221417096HRHE0`, 1,000 build / 850 cure tyres): `SWRS30` (1001) and `T7110` (final mixer) have no spec.
+- **Finals now run only on 102 / 104.** The spec gives final compounds a cycle only on F270 F / K310 F, so they no longer go to the master mixers. 102 now has 36.6 h of work and 104 has 24.3 h (v46i: finals spread over all 6 mixers).
+
+**Result (PCR only; TBR blocked):**
+
+| | Build plan | Built | Cure plan (eligible) | Cured |
+|---|---|---|---|---|
+| PCR v46j | 60,607 | 57,976 (95.7%) | 60,184 | **48,968 (81.4%)** |
+| PCR v46i (for reference) | 61,607 | 59,318 (96.3%) | 61,034 | 50,592 (82.9%) |
+| TBR v46j | 0 | 0 | 0 (18,074 blocked) | 0 |
+
+- PCR day 1 builds 7,689 tyres (58.0%); v46i built 8,282.
+- PCR's −1,624 cured breaks down as 850 from the blocked SKU, with the rest from finals being limited to two mixers.
+- Spot check: lot times equal the spec exactly. B127 on 104: 10 batches × 130.26 s = 21.71 min. CAP 66 on 901: 9,000 m ÷ 31 = 290.3 min.
+- All schedule checks pass, G6 included for the stopped TBR line. Exit code 1 is the machine-coverage check only; it now also lists the idle master mixers.
+
+**How to run:**
+```bash
+cd engine && CTP_DATA=../data-ppds-v38-bomv2-27oct-spec python stage_routing_spec.py && cd ..
+python run.py --pcr "plan-27oct/ctp_building_schedule_October_2026_pcr 38.xlsx" --tbr "plan-27oct/ctp_building_schedule_October_2026_tbr 39.xlsx" --pcr-curing "plan-27oct/ctp_curing_schedule_October_2026_pcr 38.xlsx" --tbr-curing "plan-27oct/ctp_curing_schedule_October_2026_tbr 39.xlsx" --run e2e_v46j --rules config/rules_v46j.yaml --data data-ppds-v38-bomv2-27oct-spec --plan-dir plan-e2e_v46j
+```
+
+---
+
+## v46i: the 27 Oct plan, with 27 Oct shift A stock (27 Oct)
+
+**What changed:** the **plan** and the **opening stock**, not the engine. The rules are the same as v46h (`config/rules_v46i.yaml` only points at the new data). **Not comparable with v46e–v46h**, because it is a different plan over a different horizon.
+
+| | v46h | v46i |
+|---|---|---|
+| Plan | `plan-latest/` (pcr 26 / tbr 27), 22–31 Oct, 10 days | **`plan-27oct/` (pcr 38 / tbr 39), 27–31 Oct, 5 days** |
+| Opening stock | `CTP_Opening_WIP` 22 Oct shift A, 1,775 rows | **27 Oct shift A, sync 06:31:17, 13,333 rows** |
+| Green tyres | `CTP_GT_Inventory` 22 Oct | **27 Oct 06:30: PCR 4,927, TBR 1,059** |
+| Masters | BOM v2 + routing restaged 27 Oct 17:32 | same |
+
+**How the data was staged** (`data-ppds-v38-bomv2-27oct/`, a copy of the v46h folder with only the stock and green tyre files restaged; read-only on the DB):
+```bash
+cd engine
+CTP_WIP_DATE=2026-10-27 CTP_WIP_ASOF='2026-10-27 06:31:17.841' CTP_GT_DATE=2026-10-27 CTP_GT_ASOF='2026-10-27 06:30:00.000' \
+  python refresh_ctp_sql.py --ppds-only --bom-v2 --out ../data-ppds-v38-bomv2-27oct --only opening_wip,gt_inventory_manual_pcr,gt_inventory_manual_tbr
+CTP_DATA=../data-ppds-v38-bomv2-27oct python stage_wip_ppds.py
+CTP_DATA=../data-ppds-v38-bomv2-27oct python stage_wip_v6.py --split-from e2e_v46i --also-bom data-ppds-v38
+```
+- **Compound in batches:** 4,736 compound rows are booked in batches and become 1.04 million kg through the routing batch size. JV06 (26 rows) has no batch size and is dropped (blocker).
+- **Green tyres:** 6,488 green tyre rows in the stock table are held out. Green tyres come only from `CTP_GT_Inventory`, so they are not counted twice.
+- **Engine fix, `stage_wip_v6.py --also-bom`:** the PCR/TBR stock split recognised codes only through the run's BOM. BOM v2 has no cut codes, so on this snapshot **175 cut / slit items** (e.g. `B1-PBLT063`, `SNCT001`) would have been dropped as "in neither BOM" before the cut-stock conversion could turn them into mother roll. With the pre-v2 BOM also read, only 8 items (2,571 units) are left out. The 22 Oct stock was split the same way, with the pre-v2 BOM.
+- **Split by this plan's own demand:** the first pass split shared items using v46h demand (kept as `outputs/e2e_v46i_pass1`). Re-split from v46i's own demand, 7 shared items (compounds B186, B714, B715, B1144, B333 + CWBHTCP100, BRTTL; about 9,200 units) moved from TBR to PCR. The final v46i uses that split. Effect: TBR −260 cured, PCR unchanged.
+- **CAP 66, first run where the MHE conversion counts:** 28 FAB rolls 8,457.1 m as is; 1 STL roll 315.0 → 31.5 m (**assumed** 10 : 1); 1 cap strip 150.9 → 0.98 m. 5,788 m of CAP 66 stock is used, and 901 makes 2 CAP 66 lots (25,200 m).
+
+**Result (5-day horizon, ends 1 Nov 07:00):**
+
+| | Build plan | Built | Cure plan (eligible) | Cured |
+|---|---|---|---|---|
+| PCR | 61,607 | 59,318 (96.3%) | 61,034 | 50,592 (82.9%) |
+| TBR | 13,411 | 11,657 (86.9%) | 13,388 | 9,542 (71.3%) |
+| **Both** | 75,018 | 70,975 (94.6%) | 74,422 | **60,134 (80.8%)** |
+
+- **Blocked:** 3 TBR SKUs with no BOM are excluded (4,686 tyres). No PCR SKU is blocked.
+- **Shortfall:** all of it is late, cured after 1 Nov: PCR 10,442, TBR 3,846. 36 TBR tyres never got a green tyre.
+- **Stock used:** PCR 227,484 real + 8,537 from cut stock; TBR 153,046 + 8,176. **A-WIP-1 assumed cover is 0**, because the 27 Oct feed gives the inner liners an item type. A-WIP-2 is still used: PCR 401, TBR 1,343.
+- All 22 schedule checks pass. Every trolley starts with a full kit.
+
+**How to run:**
+```bash
+python run.py --pcr "plan-27oct/ctp_building_schedule_October_2026_pcr 38.xlsx" --tbr "plan-27oct/ctp_building_schedule_October_2026_tbr 39.xlsx" --pcr-curing "plan-27oct/ctp_curing_schedule_October_2026_pcr 38.xlsx" --tbr-curing "plan-27oct/ctp_curing_schedule_October_2026_tbr 39.xlsx" --run e2e_v46i --rules config/rules_v46i.yaml --data data-ppds-v38-bomv2-27oct --plan-dir plan-e2e_v46i
+```
+
+---
+
+## Report: opening stock present vs consumed, and the cut / slit conversion check (27 Oct, on v46i)
+
+**What changed:** only a report. The schedule is the same. New `engine/make_wip_presence_report.py` → `outputs/<run>/WIP_PRESENCE_VS_CONSUMPTION_<run>.xlsx`.
+
+**How it works:** it rebuilds the stock pool exactly as phase 2 does today: CAP 66 MHE conversion, then cut / slit stock to child, then ageing, then FEFO batch IDs. So every batch matches what the schedule drew. It checks itself against the run's conversion file.
+- The older `make_wip_usage_report.py` predates both conversions and no longer matches.
+- The new report builds each line's list of bypassed codes on its own. A shared list was found to leak PCR's `BCFT002` into TBR.
+
+**Findings on v46i** (details in [WIP_PRESENCE_VS_CONSUMPTION_v46i.md](WIP_PRESENCE_VS_CONSUMPTION_v46i.md)):
+- **Usable stock is 84–97% consumed.** Green tyres: 4,772 / 4,806 PCR, 1,029 / 1,031 TBR.
+- **Expired compound:** 418 t PCR and 348 t TBR of final compound is already expired at the plan start (median age about 9 days vs 72–120 h shelf life).
+- **Cut / slit stock is converted:** PCR 304 batches → 10,216 units of 16 children (84% consumed); TBR 249 → 9,434 of 11 (87%).
+- **Not converted:**
+  - TBR `SNCT001`–`003`, 12,432 m (M vs M², no width);
+  - TBR `BCFT002`, 266 m (PCR cut stock split to TBR);
+  - 2,571 units in neither BOM.
+- **CAP 66:** every usable roll is consumed (5,787.7 m). 9 FAB rolls (2,701 m) are expired at the plan start.
+- **544 batches are drawn for a need after their real expiry** (the opening-clock rule).
+
+---
+
+## Report: green tyres built per day, counted tyre by tyre (27 Oct, on v46e)
+
+**What changed:** only the report (`engine/make_fulfilment_report.py`). The schedule is the same.
+
+**Why:** the old "built" figure credits a whole trolley to the day it **finishes**. A trolley that runs from 04:00 to 10:00 makes about half its tyres before 07:00, but all of them were counted on the next day.
+
+**How it counts now:** two new columns in `FULFILMENT_DAYWISE_v15.csv`, `tyres_built` and `tyres_built_pct`.
+- Tyres come off the builder evenly, from the end of the trolley's setup until it finishes.
+- A trolley that runs past 07:00 is split between the two days by time. Each day gets whole tyres.
+- Each tyre is counted once, on the day it is made. A trolley's days add up to its quantity.
+- The old `built` column is kept, so you can compare the two.
+
+**Result on v46e:** totals are unchanged (PCR 125,002, TBR 26,645). Only the split between days moves.
+
+| Day | PCR by trolley finish | PCR tyre by tyre | TBR by trolley finish | TBR tyre by tyre |
+|---|---|---|---|---|
+| 22 Oct | 1,841 (14.2%) | **3,312 (25.6%)** | 528 (19.5%) | **665 (24.5%)** |
+| 23 Oct | 9,387 (68.8%) | **9,962 (73.0%)** | 1,857 (67.3%) | **1,982 (71.9%)** |
+| 24 Oct | 15,322 | **15,350** | 3,260 | **3,506** |
+| 25 Oct | 15,376 | **15,195** | 3,620 | **3,347** |
+| 26 Oct | 15,395 | **14,814** | 2,971 | **2,952** |
+| 27 Oct | 14,915 | **15,004** | 2,876 | **2,952** |
+| 28 Oct | 13,976 | **14,138** | 3,001 | **3,028** |
+| 29 Oct | 13,394 | **12,837** | 3,377 | **3,345** |
+| 30 Oct | 13,976 | **13,969** | 2,784 | **2,619** |
+| 31 Oct | 11,420 | **10,421** | 2,371 | **2,249** |
+| **Total** | 125,002 | **125,002** | 26,645 | **26,645** |
+
+**Note:** day 1 was understated by the old count. Counted tyre by tyre, PCR builds 3,312 tyres on 22 Oct, not 1,841.
 
 ---
 

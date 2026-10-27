@@ -51,10 +51,35 @@ class RepoBasics(unittest.TestCase):
         self.assertTrue(R.rule("bypass_transfer_parents_from_routing"))
         self.assertEqual(R.rule("bom.walk_each_item_once"), "all")
         self.assertTrue(R.rule("fourrc_dip.enabled"))
+        # v46f-k
+        self.assertIn("CAP 66", R.rule("linespeed.single_strand"))
+        self.assertTrue(R.rule("campaign.urgency_by_trolley_need"))
+        self.assertAlmostEqual(R.rule("wip.mhe_conversion")["CAP 66"]["STL"]["factor"], 0.1)
+        self.assertTrue(R.rule("wip.cut_width_from_bom"))
+        self.assertEqual(R.rule("wip.alternative_children"), ["SNCT001", "SNCT003"])
+        self.assertEqual(R.rule("wip.extra_cut_codes")["tbr"]["BCFT002"], "bias")
+        self.assertIsNone(R.rule("routing_speed.source"))      # v46j speeds NOT used
+
+    def test_plan_day_and_new_plan_folder(self):
+        import run_pipeline as rp
+        f = rp.find_plan_files(ROOT / "plans" / "2026-10-27")
+        start, day = rp.plan_day(f)
+        self.assertEqual(str(day), "2026-10-27")
+        self.assertEqual(start.hour, 7)
+
+    def test_db_env_file_is_ignored_and_example_has_no_values(self):
+        import subprocess
+        r = subprocess.run(["git", "check-ignore", "db.env"], cwd=ROOT, capture_output=True)
+        self.assertEqual(r.returncode, 0, "db.env must be git-ignored")
+        for ln in (ROOT / "db.env.example").read_text(encoding="utf-8").splitlines():
+            if ln.startswith(("CTP_DB_HOST", "CTP_DB_USER", "CTP_DB_PASSWORD")):
+                self.assertTrue(ln.rstrip().endswith("="), ln)
 
     def test_engine_entry_points_exist(self):
         for f in ("run_all.py", "phase5_placement.py", "make_validation_report.py",
-                  "ctp_campaign.py", "ctp_aligned_needby.py", "make_bypass_report.py"):
+                  "ctp_campaign.py", "ctp_aligned_needby.py", "make_bypass_report.py",
+                  "stage_wip_v6.py", "make_wip_presence_report.py",
+                  "make_day1_wip_building_report.py", "refresh_ctp_sql.py"):
             self.assertTrue((ROOT / "engine" / f).exists(), f)
 
     def test_no_credential_defaults(self):

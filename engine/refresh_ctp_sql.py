@@ -200,7 +200,7 @@ def ad_opening_wip(cn_ppds, cn_plan) -> pd.DataFrame:
     asof = os.environ.get("CTP_WIP_ASOF", "").strip()
     sql = ("SELECT production_id, produced_time, item_code, item_type, unit, "
            "inventory, max_aging, max_aging_unit, min_aging, min_aging_unit, "
-           "inventory_date, shift, updated_at FROM CTP_Opening_WIP "
+           "inventory_date, shift, updated_at, mhe_code FROM CTP_Opening_WIP "
            "WHERE inventory_date = '" + str(day) + "'")
     if asof:
         sql += " AND updated_at = '" + asof + "'"
@@ -591,6 +591,9 @@ def main() -> int:
                          "and its manifest entry is left as it is - a full "
                          "refresh overwrites the files later staging steps "
                          "write (stage_local_masters, stage_wip_merged)")
+    ap.add_argument("--skip", default="",
+                    help="comma-separated tables NOT to stage, e.g. the reference-only "
+                         "CTP_Live_Inventory,CTP_Live_Inventory_Raw (5.7M rows, read by no phase)")
     ap.add_argument("--bom-v2", action="store_true",
                     help="v46c+: stage CTP_Master_BOM_v2 as the engine BOM (verbatim), "
                          "the pre-v2 BOM into reference_bom/, and CTP_Master_FRC")
@@ -631,7 +634,10 @@ def main() -> int:
                "ppds_db": None if a.no_ppds else PPDS,
                "ppds_only": bool(a.ppds_only),
                "staged_at": now, "tables": {}}
-    want = (lambda t: t in only) if only else (lambda t: True)
+    skip = {t.strip() for t in a.skip.split(",") if t.strip()}
+    want = ((lambda t: t in only) if only else (lambda t: True))
+    _want0 = want
+    want = lambda t: _want0(t) and t not in skip
     missing: list[str] = []
 
     cn_plan = None if a.ppds_only else ctpsql.connect(PLANNING)

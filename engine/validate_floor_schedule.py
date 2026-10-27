@@ -115,6 +115,14 @@ def audit(run: str, line: str) -> pd.DataFrame:
             if dept.get(p) == "FINAL MIXING":
                 allow[p] |= _mm
 
+    # v46j: with `routing_speed.source: all_machine_spec` an item's machines
+    # ARE the machines CTP_Master_Routing_v2.all_machine_spec gives a speed for
+    # - those replace the old routing's list, the same way the engine reads it
+    if io.spec_mode():
+        for p, ms in io.load_machine_spec(line).items():
+            allow[p] = set(ms)
+            stated.add(p)
+
     # The machines the engine was ENTITLED to use where the routing names none
     # (phase 0 assumption A01): the department pool, else the plant register.
     assumed_ok: dict[str, set] = {}
@@ -305,6 +313,9 @@ def main() -> int:
     print("=" * 86)
     for line in ("pcr", "tbr"):
         print(f"\n  ---- {line.upper()} ----")
+        if line in io.stopped_lines(a.run):
+            print("  not scheduled: every SKU is DATA_BLOCKED (phase0_sku_status.csv)")
+            continue
         audit(a.run, line)
     r = pd.DataFrame(RESULTS)
     r.to_csv(io.OUT_ROOT / a.run / "VALIDATION.csv", index=False,

@@ -71,6 +71,16 @@ def _extra(pid: str) -> list[str]:
     return []
 
 
+def _no_eligible_demand(run: str, line: str) -> bool:
+    import ctpio as _io
+    import pandas as _pd
+    p = _io.OUT_ROOT / run / line / "phase0_plan_effective.csv"
+    try:
+        return p.exists() and len(_pd.read_csv(p)) == 0
+    except Exception:
+        return True                  # an empty file has no header to read
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", default="e2e_v1")
@@ -127,7 +137,8 @@ def main() -> int:
               f"{(R.cfg().get('shared_machines') or {}).get('joint')}"
               f"  ->  {[p[0] for p in jnt]} run ONCE across "
               f"{'+'.join(args.line)}, so no machine is booked twice.")
-    for line in args.line:
+    skipped = []
+    for line in list(args.line):
         print("\n" + "#" * 74)
         print(f"#  CTP e2e — run {args.run}   LINE {line.upper()}")
         print("#" * 74)
@@ -135,6 +146,18 @@ def main() -> int:
             if run(pid, script, label, line) != 0:
                 print(f"\n[ABORT] {line}/{pid} failed", file=sys.stderr)
                 return 1
+            # v46j: a line whose every SKU is DATA_BLOCKED has nothing to
+            # schedule; it is stopped after phase 0 (its blocked demand is
+            # still reported) instead of crashing on an empty plan
+            if pid == "phase0" and _no_eligible_demand(args.run, line):
+                print(f"\n  [LINE STOPPED] {line.upper()}: no eligible demand after phase 0 - "
+                      f"every SKU is DATA_BLOCKED (see phase0_sku_status.csv)")
+                skipped.append(line)
+                break
+    if skipped:
+        args.line = [x for x in args.line if x not in skipped]
+        joint = joint_mode and len(args.line) > 1
+        jnt = [p for p in todo if p[0] in JOINT_PHASES] if joint else []
     if jnt:
         print("\n" + "#" * 74)
         print(f"#  CTP e2e — run {args.run}   JOINT  "

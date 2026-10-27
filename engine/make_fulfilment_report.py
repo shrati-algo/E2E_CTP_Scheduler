@@ -11,6 +11,10 @@ THREE TABLES, AND THEY ANSWER DIFFERENT QUESTIONS
      restates the plan and reads 100% every day, which is the commonest way a
      schedule flatters itself.
 
+     "tyres_built" counts TYRE BY TYRE instead: a trolley that runs across
+     07:00 is split between the two days by time (tyres come off evenly after
+     its setup). Same total as "built"; only the day split differs.
+
   2  CURING, day by day, gated on green tyres that actually exist.
 
   3  WHERE THE SHORTFALL WENT. A tyre that is not cured inside the horizon is
@@ -37,6 +41,39 @@ import blocker_policy as BP
 import ctpio as io
 
 
+def tyres_by_day(b: pd.DataFrame) -> pd.Series:
+    """Tyres actually built on each plant day, tyre by tyre.
+
+    A trolley's tyres come off the TBM evenly between the end of its setup
+    (feasible_start + setup_applied_min) and feasible_end. A trolley that runs
+    across 07:00 is split at the day boundary; tyre n counts on the day it is
+    finished, so each day gets whole tyres and a trolley's days add up to its qty.
+    """
+    out: dict = {}
+    for r in b.itertuples(index=False):
+        q = int(round(float(r.qty)))
+        end = pd.Timestamp(r.feasible_end)
+        st = pd.Timestamp(r.feasible_start) + pd.Timedelta(
+            minutes=float(getattr(r, "setup_applied_min", 0) or 0))
+        st = min(st, end)
+        run_s = (end - st).total_seconds()
+        d = io.plant_day(st)
+        last = io.plant_day(end)
+        done = 0
+        while d <= last and done < q:
+            cut = d + pd.Timedelta(days=1, hours=io.SHIFT_START_H)  # next 07:00
+            if cut >= end or run_s <= 0:
+                n = q - done
+            else:
+                n = int(q * (cut - st).total_seconds() / run_s) - done
+            if n:
+                k = d.date()
+                out[k] = out.get(k, 0) + n
+            done += n
+            d += pd.Timedelta(days=1)
+    return pd.Series(out, dtype=float)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", default="e2e_v15")
@@ -48,9 +85,26 @@ def main() -> int:
     print("=" * 96)
 
     rows, notes = [], []
-    for ln in ("pcr", "tbr"):
+    for ln in io.stopped_lines(a.run):
+        # v46j: every SKU of this line is DATA_BLOCKED - nothing was scheduled;
+        # the whole plan is reported as excluded, data-blocked demand
+        st = pd.read_csv(D / ln / BP.STATUS_FILE, dtype=str)
+        cur, _ = io.load_curing_plan(ln)
+        raw = float(cur["qty"].sum())
+        rows.append({"line": ln.upper(), "day": "TOTAL", "build_plan": 0, "built": 0,
+                     "built_pct": None, "tyres_built": 0, "tyres_built_pct": None,
+                     "cure_plan": 0, "cured": 0, "cured_pct": None})
+        notes.append({"line": ln.upper(), "cure_plan_raw": round(raw),
+                      "data_blocked_excluded": round(raw),
+                      "data_blocked_skus": int((st["state"] == BP.BLOCKED).sum()),
+                      "cure_plan": 0, "cured_in_horizon": 0, "shortfall": 0,
+                      "lots_outside_horizon": 0, "tyres_outside_horizon": 0,
+                      "lots_with_no_green_tyre": 0, "tyres_with_no_green_tyre": 0,
+                      "lots_pushed": 0, "median_push_h": 0.0, "max_push_h": 0.0,
+                      "even_lot_rounding_loss": 0})
+    for ln in io.scheduled_lines(a.run):
         b = pd.read_csv(D / ln / "phase5_building_plan.csv",
-                        parse_dates=["build_start", "feasible_end"])
+                        parse_dates=["build_start", "feasible_start", "feasible_end"])
         c = pd.read_csv(D / ln / "phase7_curing_plan.csv",
                         parse_dates=["planned_start", "feasible_end"])
         c_raw = c
@@ -67,22 +121,28 @@ def main() -> int:
 
         bp = b.groupby(b["build_start"].map(lambda t: io.plant_day(t).date()))["qty"].sum()
         bb = bw.groupby(bw["feasible_end"].map(lambda t: io.plant_day(t).date()))["qty"].sum()
+        bt = tyres_by_day(bw)
         cp = c.groupby(c["planned_start"].map(lambda t: io.plant_day(t).date()))["qty_planned"].sum()
         cc = cw.groupby(cw["feasible_end"].map(lambda t: io.plant_day(t).date()))["qty"].sum()
 
-        days = sorted(set(bp.index) | set(bb.index) | set(cp.index) | set(cc.index))
+        days = sorted(set(bp.index) | set(bb.index) | set(bt.index) | set(cp.index) | set(cc.index))
         for d in days:
             _bp, _bb = float(bp.get(d, 0)), float(bb.get(d, 0))
             _cp, _cc = float(cp.get(d, 0)), float(cc.get(d, 0))
+            _bt = float(bt.get(d, 0))
             rows.append({"line": ln.upper(), "day": d,
                          "build_plan": round(_bp), "built": round(_bb),
                          "built_pct": round(100 * _bb / _bp, 1) if _bp else None,
+                         "tyres_built": round(_bt),
+                         "tyres_built_pct": round(100 * _bt / _bp, 1) if _bp else None,
                          "cure_plan": round(_cp), "cured": round(_cc),
                          "cured_pct": round(100 * _cc / _cp, 1) if _cp else None})
         rows.append({"line": ln.upper(), "day": "TOTAL",
                      "build_plan": round(float(b["qty"].sum())),
                      "built": round(float(bw["qty"].sum())),
                      "built_pct": round(100 * bw["qty"].sum() / max(b["qty"].sum(), 1), 1),
+                     "tyres_built": round(float(bt.sum())),
+                     "tyres_built_pct": round(100 * bt.sum() / max(b["qty"].sum(), 1), 1),
                      "cure_plan": round(float(c["qty_planned"].sum())),
                      "cured": round(float(cw["qty"].sum())),
                      "cured_pct": round(100 * cw["qty"].sum() / max(c["qty_planned"].sum(), 1), 1)})
@@ -119,6 +179,7 @@ def main() -> int:
         g = f[f["line"] == ln]
         print(f"\n  ---- {ln} ----")
         print(f"  {'day':<12}{'build plan':>12}{'built':>10}{'built %':>10}"
+              f"{'tyres/day':>11}{'tyre %':>9}"
               f"{'cure plan':>12}{'cured':>10}{'cured %':>10}")
         for r in g.itertuples(index=False):
             sep = "  " + "-" * 76 if r.day == "TOTAL" else ""
@@ -126,6 +187,8 @@ def main() -> int:
                 print(sep)
             print(f"  {str(r.day):<12}{r.build_plan:>12,}{r.built:>10,}"
                   f"{(str(r.built_pct)+'%' if r.built_pct is not None else '-'):>10}"
+                  f"{r.tyres_built:>11,}"
+                  f"{(str(r.tyres_built_pct)+'%' if r.tyres_built_pct is not None else '-'):>9}"
                   f"{r.cure_plan:>12,}{r.cured:>10,}"
                   f"{(str(r.cured_pct)+'%' if r.cured_pct is not None else '-'):>10}")
         w = n[n["line"] == ln].iloc[0]

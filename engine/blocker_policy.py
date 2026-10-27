@@ -44,6 +44,10 @@ BLOCKERS = {
             "table": "JK_CTP_PPDS.CTP_Master_Routing",
             "why": "the component can be neither made nor bought",
             "owner": "master data (routing)"},
+    "B06": {"what": "a component the SKU needs has no machine-wise speed in all_machine_spec",
+            "table": "JK_CTP_PPDS.CTP_Master_Routing_v2 (all_machine_spec)",
+            "why": "the run time cannot be computed; no department median is used (v46j)",
+            "owner": "master data (routing v2)"},
 }
 
 # ---- assumptions: missing data with a stated stand-in -----------------------
@@ -68,7 +72,7 @@ ASSUMPTIONS = {
             "source": "apply_aging_defaults", "confidence": "medium", "status": "active"},
     "A07": {"gap": "changeover pair missing in the matrix", "rule": "machine default changeover",
             "source": "CHANGEOVER_UNPRICED.csv", "confidence": "medium", "status": "active"},
-    "A08": {"gap": "routing for a component the BOM uses (e.g. CAP 66)",
+    "A08": {"gap": "routing for a component the BOM uses",
             "rule": "component available from stock / purchase; walk stops at it",
             "source": "BOM item type", "confidence": "low", "status": "planned", "step": "6b"},
     "A09": {"gap": "buffer name does not match", "rule": "token match on the name",
@@ -90,7 +94,7 @@ ASSUMPTIONS = {
 # phase-0 finding -> how the policy treats it
 ISSUE_TO_ASSUMPTION = {"no_machines": "A01", "no_proc_time": "A02"}
 ISSUE_TO_BLOCKER = {"no_bom": "B01", "no_building_routing": "B02",
-                    "no_routing": "B05"}
+                    "no_routing": "B05", "no_machine_speed": "B06"}
 
 
 def in_kpi(state: str) -> bool:

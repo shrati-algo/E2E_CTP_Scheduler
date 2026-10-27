@@ -1,0 +1,36 @@
+# =====================================================================
+#  rules_v46f.yaml - v46e + CAP 66 MADE ON 901 (no rule change)
+#  Same rules as v46e. Only the data differs: data-ppds-v38-bomv2-cap66/
+#  restages CTP_Master_BOM_v2 and CTP_Master_Routing from JK_CTP_PPDS on
+#  2026-10-27. The routing now routes `CAP 66` on the 4-roll calender (901),
+#  so CAP 66 is made from B616M + nylon fabric instead of being skipped
+#  (its compound and fabric no longer go straight into the GT kit), and the
+#  CAP 66 opening stock (22 Oct, 3,853 m) can be netted. Opening WIP and
+#  every other staged file are the v46e ones.
+# =====================================================================
+inherit_from: rules_v46e.yaml
+meta: {run: e2e_v46f, goal: "v46e + CAP 66 made on 901 (corrected routing / BOM v2)", data: "data-ppds-v38-bomv2-cap66/"}
+
+# ---- CAP 66 assumptions removed (2026-10-27). Lists replace on inherit. ----
+# BR-1 roll table gave CAP 66 x11 (31 -> 341 m/min on 901). The BOM v2 quantity
+# is mother-roll (full sheet) metres: 0.47 m per tyre carries 0.65 kg of fabric
+# + B616M, which only fits a ~1.6 m sheet, not one 144 mm strip. 901 calenders
+# that sheet at the routing's 31 m/min; slitting it into 11 strips does not
+# make more sheet. So CAP 66 runs single-strand.
+linespeed:
+  single_strand: [BP01, "CAP 66"]
+assumptions:
+  # A-WIP-1: CAP 66 has real rows in the stock feed but a blank item_type, so
+  # its type looked "absent" and got 24 h of assumed cover on top. Listed codes
+  # never get assumed cover. (24 PCR inner liners IL0xx have the same blank
+  # item_type; left as in v46e on purpose - this run changes CAP 66 only.)
+  absent_type_skip_stocked_codes: ["CAP 66"]
+  # A-WIP-2: CAP 66 codes removed - its real stock (13 rolls, 3,853 m) is used
+  # and the rest is made on 901. Other codes unchanged from v46e.
+  first_hours_cover:
+    hours: 8
+    codes: [CAP30, GBCAP20, "CAP30 - CAPSTRIP", "GBCAP20 - CAPSTRIP",
+            "CAP30- slitted material", "GBCAP20- slitted material",
+            CAP30-MOTHERROLL, GBCAP20-MOTHERROLL,
+            EG01, EG02, EG03, BP01, EGSL01, EGSL02, EGSL03, TEG-01, TEG-02,
+            "TB WRAP B1144", STC-WRAP, "GUM STRIP"]

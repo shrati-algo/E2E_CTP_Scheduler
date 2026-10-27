@@ -225,8 +225,45 @@ def bypass_stock_to_children(wip: pd.DataFrame, bom: pd.DataFrame, itypes: dict,
     """
     byp = set(io.BYPASSED)
     sched = set(sched or ())
+    # v46k: cut codes this line's routing does not list but its BOM does (TBR
+    # BCFT002: pre-cut roll from BRTTL, like BCFT001/003/004 on bias cutter 2001)
+    _xc = ((R.rule("wip.extra_cut_codes") or {}).get(line.lower()) or {})
+    extra_bias = set()
+    for _c, _kind in _xc.items():
+        byp.add(io._s(_c))
+        if str(_kind).strip().lower() == "bias":
+            extra_bias.add(io._s(_c))
+    bias = frozenset(set(bias) | extra_bias)
+    # v46k: codes whose BOM lists several pre-cut rolls under them (SNCT001: BCFT001,
+    # BCFT002, BCFT005) taken as ALTERNATIVES - one roll's path, not all summed.
+    # OPEN ISSUE: the plant has not confirmed alternatives vs all used together.
+    ALT = {io._s(x) for x in (R.rule("wip.alternative_children") or [])}
+    # v46k: stock counted in M where the BOM states the code in M2 (TBR chafers
+    # SNCT001-003): the BOM gives the width itself - the same SKU lists the code
+    # as a CHILD in M and as a PARENT in M2, so M2 per M = Parent_qty / child qty
+    WIDTH = str(R.rule("wip.cut_width_from_bom", False)).lower() in ("1", "true", "on", "yes")
     if not byp or wip is None or wip.empty:
         return wip, pd.DataFrame()
+
+    def _widths(bomdf) -> dict:
+        b = bomdf.copy()
+        for _c in ("Super_parent", "Parent", "child"):
+            b[_c] = b[_c].map(io._s)
+        pq = pd.to_numeric(b["Parent_qty"], errors="coerce")
+        cq = pd.to_numeric(b["child_quantity"], errors="coerce")
+        out = {}
+        for code in byp:
+            pa = b[(b["Parent"] == code) & (b["Parent_unit"].map(io._s).str.upper() == "M2")]
+            ch = b[(b["child"] == code) & (b["child_Unit"].map(io._s).str.upper() == "M")]
+            if pa.empty or ch.empty:
+                continue
+            a_ = pq[pa.index].groupby(pa["Super_parent"]).first()
+            x_ = cq[ch.index].groupby(ch["Super_parent"]).sum()
+            r_ = (a_ / x_).replace([float("inf")], float("nan")).dropna()
+            r_ = r_[r_ > 0]
+            if len(r_):
+                out[code] = (float(r_.median()), int(len(r_)))
+        return out
     # Follow the engine's own BOM walk, SKU tree by SKU tree: from the cut code
     # go down through every child the plant does not make here (another
     # bypassed code, or a contracted / pre-cut code such as BCFT002) until a
@@ -270,7 +307,23 @@ def bypass_stock_to_children(wip: pd.DataFrame, bom: pd.DataFrame, itypes: dict,
             sigs, units, via = defaultdict(list), {}, {}
             for sk in sorted(sks):
                 out = {}
-                walk(sk, code, 1.0, (code,), out, units, via)
+                if code in ALT:
+                    # alternatives: walk each first-level child on its own and
+                    # keep ONE roll's path (the largest single path per SKU)
+                    best = {}
+                    for c1, (r1, cu1, _p1) in tree.get((sk[0], sk[1], code), {}).items():
+                        o = {}
+                        if ((c1 in byp or c1 not in sched) and (sk[0], sk[1], c1) in tree):
+                            walk(sk, c1, r1, (code, c1), o, units, via)
+                        else:
+                            o[c1] = r1
+                            units[c1] = cu1
+                            via[c1] = f"{code} > {c1}"
+                        if sum(o.values()) > sum(best.values()):
+                            best = o
+                    out = best
+                else:
+                    walk(sk, code, 1.0, (code,), out, units, via)
                 if out:
                     sigs[tuple(sorted(out))].append(out)
             if not sigs:
@@ -308,6 +361,13 @@ def bypass_stock_to_children(wip: pd.DataFrame, bom: pd.DataFrame, itypes: dict,
     def leaves(code):
         return rat.get(code, [])
 
+    widths = {}
+    if WIDTH:
+        widths = _widths(bom)
+        if conv_bom is not None and len(conv_bom):
+            for c, v in _widths(conv_bom).items():
+                widths.setdefault(c, v)
+
     def hrs(v, unit):
         v = pd.to_numeric(v, errors="coerce")
         if pd.isna(v):
@@ -316,6 +376,8 @@ def bypass_stock_to_children(wip: pd.DataFrame, bom: pd.DataFrame, itypes: dict,
 
     keep, add, rep = [], [], []
     dept = dict(io.BYPASSED)
+    for _c in _xc:
+        dept.setdefault(io._s(_c), "BOM only (wip.extra_cut_codes)")
     for r in wip.itertuples(index=False):
         code = r.itemcode
         if code not in byp:
@@ -332,10 +394,15 @@ def bypass_stock_to_children(wip: pd.DataFrame, bom: pd.DataFrame, itypes: dict,
             rep.append(dict(base, status="KEPT - BOM gives this code no child"))
             continue
         pu = kids[0]["parent_unit"]
+        width = None
         if wu and pu and wu != pu:
-            keep.append(r._asdict())
-            rep.append(dict(base, status=f"KEPT - stock unit {wu} vs BOM unit {pu}"))
-            continue
+            if wu == "M" and pu == "M2" and code in widths:
+                width = widths[code][0]          # v46k: M2 per M, from the BOM itself
+                q = q * width
+            else:
+                keep.append(r._asdict())
+                rep.append(dict(base, status=f"KEPT - stock unit {wu} vs BOM unit {pu}"))
+                continue
         # transfer time = the cut code's own minimum ageing (row first, master next)
         mn = hrs(getattr(r, "MinAging", None), getattr(r, "MinAgingUnit", ""))
         mn = mn if (mn is not None and mn > 0) else float(aging.get(code, (0.0, 0.0))[0] or 0.0)
@@ -359,6 +426,9 @@ def bypass_stock_to_children(wip: pd.DataFrame, bom: pd.DataFrame, itypes: dict,
                             ratio_max=round(k["ratio_max"], 6), skus_on_path=k["bom_rows"],
                             skus_with_code=k["skus_all"], other_paths=k["other_paths"],
                             ratio_source=k.get("ratio_source", "run BOM"),
+                            width_m2_per_m=width,
+                            width_skus=(widths[code][1] if width is not None else None),
+                            alternatives=(code in ALT),
                             bias_cutter=code in bias,
                             child_qty=round(q * k["ratio_total"], 3),
                             transfer_min_ageing_h=mn,
@@ -371,6 +441,54 @@ def bypass_stock_to_children(wip: pd.DataFrame, bom: pd.DataFrame, itypes: dict,
         out["converted_from"] = ""
     out["converted_from"] = out["converted_from"].fillna("")
     return out, pd.DataFrame(rep)
+
+
+def mhe_stock_to_item(wip: pd.DataFrame, conv: dict, line: str) -> tuple:
+    """v46h: ONE ITEM CODE, SEVERAL FORMS - TOLD APART BY THE MHE CODE.
+
+    The stock feed books CAP 66 under item_code `CAP 66` whatever form it is in;
+    only the MHE (stand) code says which:
+
+        4RC/FAB/nnn  mother roll (FRC)          -> CAP 66 x 1
+        4RC/STL/nnn  slitted / pre-cap strip     -> CAP 66 x factor (assumed)
+        (empty)      10 mm cap strip (cutter)    -> CAP 66 x factor (master BOM)
+
+    `wip.mhe_conversion` = {item: {KIND: {as, factor, source}}}. KIND is the
+    middle part of the MHE code (FAB, STL, ...) or NONE for an empty one. Each
+    row's quantity becomes mother-roll metres; its dates and ageing are kept.
+    A kind the rules don't list is KEPT unchanged and reported.
+    """
+    if not conv or wip is None or wip.empty:
+        return wip, pd.DataFrame()
+    if "mhe_code" not in wip.columns:
+        print("  MHE conversion      : SKIPPED - the staged stock has no mhe_code "
+              "column (run stage_wip_mhe.py)")
+        return wip, pd.DataFrame()
+    w = wip.copy()
+    mhe = w["mhe_code"].fillna("").astype(str).str.strip()
+    kind = mhe.str.extract(r"^[^/]*/([^/]*)/")[0].fillna("").str.upper()
+    kind[mhe == ""] = "NONE"
+    rep = []
+    for item, kinds in conv.items():
+        kinds = {str(k).upper(): v for k, v in (kinds or {}).items()}
+        for i in w.index[w["itemcode"].map(io._s) == item]:
+            k = kind[i] or "OTHER"
+            q = float(w.at[i, "inventory"] or 0)
+            spec = kinds.get(k)
+            base = {"line": line.upper(), "itemcode": item,
+                    "production_id": w.at[i, "production_id"], "mhe_code": mhe[i],
+                    "mhe_kind": k, "stock_qty": q, "unit": w.at[i, "unit"]}
+            if spec is None:
+                rep.append(dict(base, status="KEPT - MHE kind not in wip.mhe_conversion",
+                                factor=1.0, mother_roll_qty=q))
+                continue
+            f = float(spec.get("factor", 1.0))
+            w.at[i, "inventory"] = q * f
+            rep.append(dict(base, status="CONVERTED" if f != 1.0 else "AS IS",
+                            stock_form=spec.get("as", item), factor=f,
+                            mother_roll_qty=round(q * f, 3),
+                            source=spec.get("source", "")))
+    return w, pd.DataFrame(rep)
 
 
 def allocate(batches, need_qty, need_by, draw_at):
@@ -446,7 +564,35 @@ def main() -> int:
               f"from scratch behind the opening runway")
         print(f"  [GAP] this is the single largest assumption in the {args.line.upper()} run")
     else:
+        # ---- v46h: one item code in several forms (CAP 66), told apart by MHE code
+        _mconv = R.rule("wip.mhe_conversion") or {}
+        if _mconv:
+            wip, _mrep = mhe_stock_to_item(wip, _mconv, args.line)
+            if len(_mrep):
+                _mrep.to_csv(OUT / "phase2_mhe_conversion.csv", index=False,
+                             encoding="utf-8-sig")
+                for (_it, _k, _st), _g in _mrep.groupby(["itemcode", "mhe_kind", "status"]):
+                    print(f"  MHE conversion      : {_it} [{_k}] {len(_g)} row(s) "
+                          f"{_g['stock_qty'].sum():,.1f} -> {_g['mother_roll_qty'].sum():,.1f} "
+                          f"{_g['unit'].iat[0]} mother roll ({_st})")
+                    if _st.startswith("KEPT"):
+                        BLK.add("phase2", "AMBIGUOUS", io.wip_table(), _it,
+                                f"{len(_g)} stock row(s) with MHE kind {_k} have no "
+                                f"conversion in wip.mhe_conversion - counted as mother roll",
+                                line=args.line.upper(), referenced_at="phase2.mhe_stock_to_item",
+                                qty=float(_g["stock_qty"].sum()))
         _wip_types_raw = {str(x).strip().lower() for x in wip["item_type"].dropna().unique()}
+        # v46f: codes the feed holds real rows of (its item_type may be blank,
+        # e.g. CAP 66 on 22 Oct). `assumptions.absent_type_skip_stocked_codes`
+        # = true (every such code) or a list of codes: those are never granted
+        # A-WIP-1 cover - their real stock is used.
+        _wip_codes_raw = {str(x).strip() for x in wip["itemcode"].dropna().unique()}
+        _sk = R.rule("assumptions.absent_type_skip_stocked_codes", False)
+        if isinstance(_sk, (list, tuple, set)):
+            _wip_codes_raw &= {str(c).strip() for c in _sk}
+            _skip_stocked = bool(_wip_codes_raw)
+        else:
+            _skip_stocked = str(_sk).lower() in ("1", "true", "on", "yes")
         # ---- v46a: cut / slit stock becomes stock of the material it was cut from
         BYP_CONV = str(R.rule("wip.bypass_stock_to_children", False)).lower() in (
             "1", "true", "on", "yes")
@@ -508,7 +654,10 @@ def main() -> int:
         newest_sync = snap.get("last_sync")
         _pinned = bool(os.environ.get("CTP_WIP_ASOF", "").strip())
         today = pd.Timestamp.now().normalize()
-        if sd is not None and pd.notna(sd) and pd.Timestamp(sd) < today:
+        # a snapshot of the PLAN'S OWN START DAY is the policy (stock as the
+        # first shift opens), not staleness - only an older one is flagged
+        if (sd is not None and pd.notna(sd) and pd.Timestamp(sd) < today
+                and pd.Timestamp(sd).normalize() != opening.normalize()):
             BLK.add("phase2_wip", "STALE", _WIPT,
                     f"inventory_date={pd.Timestamp(sd).date()}",
                     f"the newest snapshot the table holds is "
@@ -593,15 +742,20 @@ def main() -> int:
                 dq = (dem[dem["item_type"].astype(str).str.strip() == it]
                       .groupby(dem["item_code"].astype(str))["demand_qty"].sum())
                 tot = float(dq.sum()) or 1.0
+                given = 0.0
                 for code, cq in dq.items():
                     g = grant_total * float(cq) / tot
                     if g <= 0:
                         continue
+                    if _skip_stocked and code.strip() in _wip_codes_raw:
+                        continue               # v46f: real stock rows exist
                     pool.setdefault(code, []).append({
                         "ready": opening, "expiry": pd.Timestamp.max,
                         "qty": g, "opening": g, "produced": opening,
                         "row": -1, "batch_id": f"{code}#ASSUMED"})
-                _granted.append((it, grant_total))
+                    given += g
+                if given > 0:
+                    _granted.append((it, given))
             if _granted:
                 print(f"  [A-WIP-1]           : {len(_granted)} item type(s) absent "
                       f"from the feed granted {_cov_h:g} h of their own consumption "

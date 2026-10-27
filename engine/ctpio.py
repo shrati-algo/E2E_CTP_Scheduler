@@ -73,6 +73,19 @@ def outdir(run: str, line: str) -> pathlib.Path:
     return p
 
 
+def scheduled_lines(run: str) -> tuple:
+    """v46j: the lines the run actually scheduled. A line whose every SKU is
+    DATA_BLOCKED is stopped after phase 0 (run_all) and has no schedule files."""
+    out = tuple(ln for ln in ("pcr", "tbr")
+                if (OUT_ROOT / run / ln / "phase5_building_plan.csv").exists()
+                or not (OUT_ROOT / run / ln / "phase0_plan_effective.csv").exists())
+    return out or ("pcr", "tbr")
+
+
+def stopped_lines(run: str) -> tuple:
+    return tuple(ln for ln in ("pcr", "tbr") if ln not in scheduled_lines(run))
+
+
 def _rd(name: str) -> pd.DataFrame:
     return pd.read_csv(DATA / f"{name}.csv", encoding="utf-8-sig", low_memory=False)
 
@@ -863,9 +876,166 @@ def build_routing_meta(rt: pd.DataFrame, alias: dict) -> dict[str, dict]:
                 m["batch_size"] = float(r.batch_size)
             if not m.get("batch_unit") and _s(getattr(r, "batch_UNIT", "")):
                 m["batch_unit"] = _s(r.batch_UNIT)
-    _tda_inline(rt, meta)
     extend_final_on_master(meta)
+    _apply_machine_spec(meta, rt)
+    _tda_inline(rt, meta)
     return meta
+
+
+# ------------------------------------------------- v46j: machine-wise speeds
+# `routing_speed.source: all_machine_spec` takes every item's machines AND
+# speeds from CTP_Master_Routing_v2.all_machine_spec (staged verbatim by
+# stage_routing_spec.py), one speed per machine. The routing's proc_time is not
+# used. An item the plant schedules with no speed in the spec is NOT filled by a
+# department median (A01/A02): it is marked `speed_blocked` and becomes data
+# blocker B06 in phase 0.
+_SPEC_UOM = {"MPM": "M/MIN", "M/MIN": "M/MIN", "NOS/MIN": "NOS/MIN"}
+_SPEC_CACHE: dict = {}
+SPEC_UNRESOLVED: dict = {}           # (line, spec key) -> rows
+
+
+def spec_mode() -> bool:
+    try:
+        return str(R.rule("routing_speed.source", "") or "").strip().lower() == "all_machine_spec"
+    except Exception:
+        return False
+
+
+def _register_names() -> dict:
+    """'F270 F' -> '102': the name in brackets in CTP_Machine_Master's display
+    name ('Mixer #2 (F270 F)'). The plant's own register, not an inference."""
+    out = {}
+    try:
+        mm = load_machines()
+        for i, n in zip(mm["machineDisplayId"].astype(str), mm["machineDisplayName"].astype(str)):
+            g = re.search(r"\(([^)]+)\)", n)
+            if g:
+                out[g.group(1).strip().upper()] = i.strip()
+    except Exception:
+        pass
+    return out
+
+
+def resolve_spec_machine(key: str, names: dict | None = None) -> str | None:
+    k = str(key or "").strip()
+    if not k:
+        return None
+    names = _register_names() if names is None else names
+    if k.upper() in names:
+        return names[k.upper()]
+    if k.isdigit():
+        return str(int(k))           # '0201' -> '201', as the register spells it
+    return None
+
+
+def load_machine_spec(line: str) -> dict:
+    """item -> {machine id: {"rate", "uom"} | {"cycle_min", "batch_kg"}}."""
+    line = line.lower()
+    if line in _SPEC_CACHE:
+        return _SPEC_CACHE[line]
+    p = DATA / f"jkt_routing_spec_{line}.csv"
+    out: dict = {}
+    if not p.exists():
+        BLK.add("routing_speed", "NO_TABLE", "JK_CTP_PPDS.CTP_Master_Routing_v2",
+                p.name, "machine-wise speeds not staged (run stage_routing_spec.py)",
+                line=line.upper(), referenced_at="ctpio.load_machine_spec")
+        _SPEC_CACHE[line] = out
+        return out
+    names = _register_names()
+    d = pd.read_csv(p, dtype=str, encoding="utf-8-sig")
+    for rp, s in zip(d["routed_product"].map(_s), d["all_machine_spec"].fillna("")):
+        s = str(s).strip()
+        if not rp or not s or s.lower() in ("null", "none", "{}"):
+            continue
+        try:
+            j = json.loads(s)
+        except Exception:
+            continue
+        for key, v in (j or {}).items():
+            mid = resolve_spec_machine(key, names)
+            if mid is None:
+                SPEC_UNRESOLVED[(line, key)] = SPEC_UNRESOLVED.get((line, key), 0) + 1
+                continue
+            v = v or {}
+            if "cycle_time" in v:
+                cyc = pd.to_numeric(v.get("cycle_time"), errors="coerce")
+                bw = pd.to_numeric(v.get("batch_weight"), errors="coerce")
+                cu = _s(v.get("cycle_time_uom")).upper()
+                if pd.notna(cyc) and pd.notna(bw) and cyc > 0 and bw > 0:
+                    cmin = float(cyc) / 60.0 if cu.startswith("SEC") else float(cyc)
+                    out.setdefault(rp, {}).setdefault(mid, {"cycle_min": cmin,
+                                                            "batch_kg": float(bw)})
+            else:
+                val = pd.to_numeric(v.get("value"), errors="coerce")
+                u = _SPEC_UOM.get(_s(v.get("uom")).upper())
+                if pd.notna(val) and val > 0 and u:
+                    out.setdefault(rp, {}).setdefault(mid, {"rate": float(val), "uom": u})
+    _SPEC_CACHE[line] = out
+    return out
+
+
+def _line_of_routing(rt: pd.DataFrame) -> str:
+    eq = " ".join(str(x) for x in rt["Equipment"].dropna().unique()[:3]).upper()
+    return "tbr" if "TBR" in eq else "pcr"
+
+
+def _apply_machine_spec(meta: dict, rt: pd.DataFrame) -> None:
+    if not spec_mode() or not len(rt):
+        return
+    spec = load_machine_spec(_line_of_routing(rt))
+    byp = bypass_departments()
+    for it, m in meta.items():
+        if _s(m.get("operation")).upper() in ("GT BUILDING", "CURING"):
+            continue
+        s = spec.get(it) or {}
+        m["old_machines"] = list(m["machines"])
+        m["old_proc_time"], m["old_uom"] = m.get("proc_time"), m.get("proc_time_uom")
+        if _s(m.get("department")).upper() in byp:
+            # not scheduled (cutter / slitter / TBR winding): keep as is, but only
+            # a spec speed may feed another item (the TDA in-line rule)
+            if s and all("rate" in v for v in s.values()):
+                m["spec_rbm"] = {k: v["rate"] for k, v in s.items()}
+                m["speed_source"] = "all_machine_spec"
+            else:
+                m["speed_source"] = "old routing (bypassed, not scheduled)"
+            continue
+        if not s:
+            m["proc_time"], m["proc_time_uom"] = None, None
+            m["speed_blocked"] = "no speed in all_machine_spec"
+            continue
+        mix = {k: v for k, v in s.items() if "cycle_min" in v}
+        if mix:
+            rbm = {k: v["batch_kg"] / v["cycle_min"] for k, v in mix.items()}   # KG/MIN
+            slow = min(rbm, key=rbm.get)
+            m["proc_time"], m["proc_time_uom"] = mix[slow]["cycle_min"], "MIN/BATCH"
+            m["batch_size"], m["batch_unit"] = mix[slow]["batch_kg"], "KG"
+            m["spec_mix"] = mix
+        else:
+            uoms = {v["uom"] for v in s.values()}
+            rbm = {k: v["rate"] for k, v in s.items()}
+            m["proc_time"], m["proc_time_uom"] = min(rbm.values()), sorted(uoms)[0]
+        m["machines"] = ([x for x in m["old_machines"] if x in rbm]
+                         + [x for x in rbm if x not in m["old_machines"]])
+        m["rate_by_machine"] = dict(rbm)
+        m["rate_base"] = min(rbm.values())
+        m["speed_source"] = "all_machine_spec"
+
+
+def machine_duration_min(qty: float, meta: dict, machine: str) -> float | None:
+    """v46j: a lot's minutes on THIS machine from all_machine_spec, or None."""
+    if not meta:
+        return None
+    mc = str(machine)
+    # the same efficiency phase 3 timed the lot with (engine.efficiency)
+    eff = float(R.rule("engine.efficiency", 1.0) or 1.0)
+    mix = (meta.get("spec_mix") or {}).get(mc)
+    if mix:
+        n = max(1, math.ceil(abs(float(qty)) / mix["batch_kg"] - 1e-9))
+        return n * mix["cycle_min"] / eff
+    r = (meta.get("rate_by_machine") or {}).get(mc)
+    if meta.get("speed_source") == "all_machine_spec" and r and r > 0:
+        return abs(float(qty)) / r / eff
+    return None
 
 
 TDA_INLINE: list = []                # last applied: one row per apexed-bead item
@@ -893,8 +1063,18 @@ def _tda_inline(rt: pd.DataFrame, meta: dict) -> None:
     wind = {_s(x).upper() for x in (cfg.get("winding_departments") or [])}
     if not apex or not wind:
         return
-    wrate = {it: (m["proc_time"], _s(m.get("proc_time_uom")).upper()) for it, m in meta.items()
-             if _s(m.get("department")).upper() in wind and m.get("proc_time")}
+    if spec_mode():
+        # v46j: only a winding speed stated in all_machine_spec may slow an
+        # apexed bead; a winding item with no spec does not lower it (listed in
+        # MACHINE_SPEED_GAPS)
+        wrate = {it: (min(m["spec_rbm"].values()), "NOS/MIN") for it, m in meta.items()
+                 if _s(m.get("department")).upper() in wind and m.get("spec_rbm")}
+        wrbm = {it: m["spec_rbm"] for it, m in meta.items()
+                if _s(m.get("department")).upper() in wind and m.get("spec_rbm")}
+    else:
+        wrate = {it: (m["proc_time"], _s(m.get("proc_time_uom")).upper()) for it, m in meta.items()
+                 if _s(m.get("department")).upper() in wind and m.get("proc_time")}
+        wrbm = {}
     inputs: dict = defaultdict(set)
     for r in rt.itertuples(index=False):
         if _s(getattr(r, "department", "")).upper() not in apex or not r.routed_product:
@@ -919,6 +1099,15 @@ def _tda_inline(rt: pd.DataFrame, meta: dict) -> None:
                            "slower_step": ("winding" if slow < own else "apexing")})
         if slow < own:
             m["proc_time"] = slow
+        rbm = m.get("rate_by_machine")
+        if rbm and w:
+            # per machine: the slower of this machine's apexing and winding speed
+            for mc in list(rbm):
+                ws = [wrbm[x][mc] for _, x in w if x in wrbm and mc in wrbm[x]]
+                ws = ws or [v for v, _ in w]
+                rbm[mc] = min([rbm[mc]] + ws)
+            m["rate_base"] = min(rbm.values())
+            m["proc_time"] = m["rate_base"]
 
 
 def master_mixers(meta: dict) -> list:
@@ -1040,6 +1229,8 @@ def apply_assumptions(meta: dict[str, dict]) -> dict[str, dict]:
             ASSUMPTIONS.append({"code": "A01", "item": it, "department": d,
                                 "operation": m["operation"], "gap": "machines",
                                 "value": ",".join(m["machines"]), "source": src})
+        if m.get("speed_blocked") or str(m.get("speed_source", "")).startswith("old routing (bypassed"):
+            continue                 # v46j: no speed assumption - B06, or never scheduled
         if (m["proc_time"] is None or not m["proc_time_uom"]) and op not in ("GT BUILDING", "CURING"):
             cand = by_dept_rate.get(m["department"]) or []
             if cand:

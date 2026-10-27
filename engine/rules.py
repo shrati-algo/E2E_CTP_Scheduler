@@ -151,6 +151,18 @@ def apply_speed_rules(meta: dict[str, dict]) -> dict[str, dict]:
     for it, m in meta.items():
         if m.get("proc_time") is None:
             continue
+        if m.get("speed_source") == "all_machine_spec" and m.get("rate_by_machine"):
+            # v46j: the spec states the BASE speed per machine (EG02 12 MPM on
+            # 1102, as the routing did); BR-1/BR-2/BR-3 multiply it as before.
+            if m.get("_spec_rules_done") or m.get("spec_mix"):
+                continue
+            f, why = effective_rate(it, None, 1.0, m["proc_time_uom"], m.get("operation", ""))
+            m["_spec_rules_done"] = True
+            if why and f and f > 0 and f != 1.0:
+                m["rate_by_machine"] = {k: v * f for k, v in m["rate_by_machine"].items()}
+                m["rate_base"] = min(m["rate_by_machine"].values())
+                m["proc_time"] = m["rate_base"]
+            continue
         pm = ((cfg().get("linespeed") or {}).get("per_machine") or {}).get(_norm(it))
         if pm:
             m["rate_by_machine"] = {

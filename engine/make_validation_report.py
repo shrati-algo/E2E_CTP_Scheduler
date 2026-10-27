@@ -62,6 +62,40 @@ def main() -> int:
     for ln in LINES:
         O = D / ln
         st = _csv(O / BP.STATUS_FILE, dtype=str).fillna("")
+        if ln in io.stopped_lines(a.run) and not st.empty:
+            # v46j: every SKU of this line is DATA_BLOCKED - stopped after
+            # phase 0, so the whole curing plan is listed as excluded demand
+            cur, _ = io.load_curing_plan(ln)
+            raw = float(cur["qty"].sum())
+            sb = st[st["state"] == BP.BLOCKED]
+            summ.append({"line": ln.upper(), "plan_tyres_raw": round(raw),
+                         "data_blocked_tyres": round(raw),
+                         "data_blocked_skus": int(len(sb)), "eligible_tyres": 0,
+                         "cured_eligible": 0, "fulfilment_pct_eligible": None,
+                         "cured_raw": 0, "fulfilment_pct_raw_plan": 0.0,
+                         "assumed_tyres_eligible": 0, "assumed_tyres_cured": 0,
+                         "cured_from_stock_blocked_not_counted": 0})
+            for r in sb.itertuples(index=False):
+                meta = BP.BLOCKERS.get(r.blocker_code, {})
+                lots = cur[cur["sku"] == r.sku]
+                blocked.append({
+                    "line": ln.upper(), "sku": r.sku, "blocker_code": r.blocker_code,
+                    "missing": meta.get("what", r.note), "missing_table": r.missing_table,
+                    "missing_key": r.missing_key, "why_not_assumed": meta.get("why", ""),
+                    "owner": meta.get("owner", ""), "source": r.source,
+                    "cure_tyres_excluded": round(float(lots["qty"].sum())),
+                    "build_tyres_excluded": round(float(pd.to_numeric(r.build_tyres))),
+                    "cure_lots": int(len(lots)), "presses": int(lots["press_raw"].nunique()),
+                    "first_plan_day": (str(io.plant_day(lots["start"].min()).date())
+                                       if len(lots) else ""),
+                    "cured_from_stock_not_counted": 0})
+            checks.append({"gate": "G6", "line": ln.upper(),
+                           "check": "data-blocked demand excluded from final figures and listed",
+                           "value": f"line not scheduled: {round(raw):,} tyres excluded, "
+                                    f"{len(sb)} SKU(s) listed",
+                           "target": "every blocked SKU listed", "verdict": "PASS",
+                           "since_step": 1, "note": "every SKU DATA_BLOCKED (v46j)"})
+            continue
         cp = _csv(O / "phase7_curing_plan.csv",
                   parse_dates=["planned_start", "planned_end", "gt_ready",
                                "feasible_start", "feasible_end"])

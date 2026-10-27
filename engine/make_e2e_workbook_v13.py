@@ -315,7 +315,7 @@ def main() -> int:
     print(f"  E2E WORKBOOK — schedule + sums check, one per line   [{a.run}]")
     print("=" * 80)
     rc = 0
-    for line in ("pcr", "tbr"):
+    for line in io.scheduled_lines(a.run):
         f = D / f"phase5_floor_schedule_{line}.csv"
         if not f.exists():
             print(f"  {line}: no floor schedule")

@@ -1,0 +1,26 @@
+# =====================================================================
+#  rules_v46k.yaml - v46i + THE BRTTL FAMILY OF CUT STOCK IS CONVERTED
+#  Same plan (plan-27oct/), stock (27 Oct shift A), BOM and routing
+#  (CTP_Master_Routing, proc_time) as v46i. v46j's machine-wise speeds are
+#  NOT used.
+#
+#  1 TBR chafers SNCT001-003 are stocked in M, the BOM states them in M2. The
+#    BOM gives the width itself (the same SKU lists the code as a CHILD in M and
+#    as a PARENT in M2): SNCT001 0.140, SNCT002 0.100, SNCT003 0.496 M2 per M.
+#    Stock -> M2 -> pre-cut roll BCFT00x -> BRTTL (calendered roll, 901).
+#  2 SNCT001 lists 3 pre-cut rolls (BCFT001/002/005), SNCT003 lists 2
+#    (BCFT001/003). OPEN ISSUE - alternatives or all used together? Until the
+#    plant confirms, ALTERNATIVES: one roll's path (the lower BRTTL figure).
+#  3 TBR BCFT002 has a BOM row to BRTTL but no TBR routing row; it is treated
+#    as bias-cut stock like BCFT001/003/004 (bias cutter 2001).
+#  4 Staging: stock of a cut code no line demands goes wholly to the line whose
+#    routing cuts it (stage_wip_v6 --cut-to-cutting-line), not 50/50 -
+#    BCFT002 (tyre_type PCR in the feed) goes to PCR.
+# =====================================================================
+inherit_from: rules_v46i.yaml
+meta: {run: e2e_v46k, goal: "v46i + SNCT/BCFT002 cut stock converted to BRTTL (BOM width, alternatives), cut code to its cutting line", data: "data-ppds-v38-bomv2-27oct-k/"}
+wip:
+  cut_width_from_bom: true
+  alternative_children: ["SNCT001", "SNCT003"]     # OPEN ISSUE: plant to confirm
+  extra_cut_codes:
+    tbr: {"BCFT002": bias}

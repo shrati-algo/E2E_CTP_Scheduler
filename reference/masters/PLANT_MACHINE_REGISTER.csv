@@ -1,0 +1,56 @@
+﻿machine,name,line,stated_count,input,output
+F270 M,Master Mixer,PCR,4.0,"Rubber,carbon,chemicals ",Master batch-Compound
+F440 M,Master Mixer,PCR,4.0,"Rubber,carbon,chemicals ",Master batch-Compound
+K430-1 M,Master Mixer,PCR,4.0,"Rubber,carbon,chemicals ",Master batch-Compound
+K430-2 M,Master Mixer,PCR,4.0,"Rubber,carbon,chemicals ",Master batch-Compound
+F270 F,Final Mixer,PCR,2.0,"Master batch-Compound , Sulphur",Final batch
+K310 F,Final Mixer,PCR,2.0,"Master batch-Compound , Sulphur",Final batch
+901,4 Roll Calender,PCR,1.0,"Spools,Mother roll","Ply roll,Calender belt roll"
+1901,Roller Head Calender TBR,TBR,1.0,Final batch,Inner liner
+1102,Edge gum calender,BOTH,,nan,nan
+1101,Roller Head Calender PCR,PCR,1.0,Final batch,Inner liner
+1801,Duplex Extruder TBR,TBR,1.0,Final batch,Tread
+1803,Quadraplex Extruder TBR,TBR,1.0,Final batch,"Sidewall,shoulder pad"
+1802,BEF Extruder TBR,TBR,1.0,Final batch,Belt edge filler
+1001,Triplex Extruder PCR,PCR,1.0,Final batch,Sidewall
+1002,Quintoplex Extruder PCR,PCR,1.0,Final batch,"Tread,white sidewall"
+2101,Body Ply Cutter TBR,TBR,1.0,Calender belt roll,Steel ply 
+1103,Textile Ply Cutter PCR,PCR,1.0,Ply roll,Fabric Ply 
+1104,Fischer Ply Cutter PCR,PCR,1.0,Ply roll,Fabric Ply 
+801,Belt Cutter PCR,PCR,1.0,Calender belt roll,Belt
+802,Belt Cutter TBR,TBR,1.0,Calender belt roll,Belt
+2001,Bias cutter,PCR,1.0,Ply roll,Chafer
+601,Cap Ply Cutter,PCR,1.0,"Calender roll, Edge gum compond","Cap ply ,Edge gum"
+701,Cap Strip Slitter,PCR,2.0,Cap ply,Capstrip
+702,Cap Strip Slitter,PCR,2.0,Cap ply,Capstrip
+2401,Chafer slitter,PCR,2.0,Chafer,Chafer
+2402,Chafer slitter,PCR,2.0,Chafer,Chafer
+2501,Chafer doubling,BOTH,,nan,nan
+2502,Chafer doubling,BOTH,,nan,nan
+2201,Super Assembly,TBR,1.0,"IL,SW",PA
+1201,Bead Winding PCR,PCR,1.0,"Spool,Final batch",Wound bead
+201,Bead Apexing PCR,PCR,3.0,"wound bead,Final batch",Apex bead
+202,Bead Apexing PCR,PCR,3.0,"wound bead,Final batch",Apex bead
+2403,Bead Apexing TDA TBR,TBR,3.0,"Spool ,Final batch",Apex bead
+2404,Bead Apexing TDA TBR,TBR,3.0,"Spool ,Final batch",Apex bead
+2405,Bead Apexing TDA TBR,TBR,3.0,"Spool ,Final batch",Apex bead
+3401,TBM BJ,PCR,5.0,Stock component's,Green Tire
+3402,TBM BJ,PCR,5.0,Stock component's,Green Tire
+3403,TBM BJ,PCR,5.0,Stock component's,Green Tire
+3404,TBM BJ,PCR,5.0,Stock component's,Green Tire
+3405,TBM BJ,PCR,5.0,Stock component's,Green Tire
+3406,TBM Conti,PCR,6.0,Stock component's,Green Tire
+3407,TBM Conti,PCR,6.0,Stock component's,Green Tire
+3408,TBM Conti,PCR,6.0,Stock component's,Green Tire
+3409,TBM Conti,PCR,6.0,Stock component's,Green Tire
+3410,TBM Conti,PCR,6.0,Stock component's,Green Tire
+3411,TBM Conti,PCR,6.0,Stock component's,Green Tire
+3801,TBM SAV,TBR,3.0,Stock component's,Green Tire
+3802,TBM SAV,TBR,3.0,Stock component's,Green Tire
+3803,TBM SAV,TBR,3.0,Stock component's,Green Tire
+3804,TBM MESNAC,TBR,6.0,Stock component's,Green Tire
+3805,TBM MESNAC,TBR,6.0,Stock component's,Green Tire
+3806,TBM MESNAC,TBR,6.0,Stock component's,Green Tire
+3807,TBM MESNAC,TBR,6.0,Stock component's,Green Tire
+3808,TBM MESNAC,TBR,6.0,Stock component's,Green Tire
+3809,TBM MESNAC,TBR,6.0,Stock component's,Green Tire

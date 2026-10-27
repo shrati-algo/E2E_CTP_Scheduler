@@ -30,7 +30,9 @@ from collections import defaultdict
 import pandas as pd
 
 import blockers as BLK
+import blocker_policy as BP
 import ctpio as io
+import rules as R
 
 
 def split_trolleys(lot: dict, cap: float | None) -> list[dict]:
@@ -83,6 +85,20 @@ def main() -> int:
 
     plan = pd.read_csv(OUT / "phase0_plan_effective.csv",
                        parse_dates=["build_start", "build_end"])
+    # v46j: a SKU blocked for a missing machine speed (B06) cannot be timed, so
+    # its trolleys and their upstream work are NOT scheduled - otherwise they
+    # would take shared machines (901, mixers) from demand that can be made.
+    # Its tyres stay in the plan figures as DATA_BLOCKED (phase 7 / validation).
+    if str(R.rule("routing_speed.exclude_blocked_from_schedule", False)).lower() in (
+            "1", "true", "on", "yes"):
+        _st = pd.read_csv(OUT / BP.STATUS_FILE, dtype=str).fillna("")
+        _b6 = set(_st.loc[(_st["state"] == BP.BLOCKED) & (_st["blocker_code"] == "B06"), "sku"])
+        if _b6:
+            _n = plan["sku"].isin(_b6)
+            print(f"  B06 not scheduled   : {int(_n.sum()):,} plan row(s), "
+                  f"{plan.loc[_n, 'qty'].sum():,.0f} tyres on {len(_b6)} SKU(s) - "
+                  f"a component has no machine speed in all_machine_spec")
+            plan = plan[~_n].reset_index(drop=True)
     eq = bom["Equipment"].iloc[0]
     print(f"  Equipment group     : {eq}   (one per line — no PLAN_MG_ALIAS needed)")
     print(f"  Plan rows           : {len(plan):,}   tyres {plan['qty'].sum():,.0f}")

@@ -1,0 +1,8 @@
+# =====================================================================
+#  rules_v46i.yaml - v46h engine and rules on the 27 OCT PLAN (plan-27oct/)
+#  Plan 27-31 Oct. Opening stock and green tyres from the plan's first day,
+#  27 Oct shift A: CTP_Opening_WIP sync 06:31:17, CTP_GT_Inventory 06:30.
+#  Masters (BOM v2, routing, FRC, ...) as v46h. No rule changes.
+# =====================================================================
+inherit_from: rules_v46h.yaml
+meta: {run: e2e_v46i, goal: "v46h on the 27 Oct plan with 27 Oct shift A stock", data: "data-ppds-v38-bomv2-27oct/"}

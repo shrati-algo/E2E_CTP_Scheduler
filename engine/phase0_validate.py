@@ -52,7 +52,8 @@ def _sku_status(line, rows, findings, plan, child_idx, routed, eq, alias) -> pd.
                 {BP.ISSUE_TO_ASSUMPTION[i] for i in iss[sku] if i in BP.ISSUE_TO_ASSUMPTION}))
         else:
             hit = [i for i in ("no_bom", "no_building_routing") if i in iss[sku]]
-            code = BP.ISSUE_TO_BLOCKER[hit[0]] if hit else "B05"
+            code = (BP.ISSUE_TO_BLOCKER[hit[0]] if hit else
+                    "B06" if "no_machine_speed" in iss[sku] else "B05")
             rec.update(state=BP.BLOCKED, blocker_code=code,
                        missing_table=BP.BLOCKERS[code]["table"],
                        missing_key=(sku if hit else
@@ -145,7 +146,8 @@ def main() -> int:
                 bad.append((it, "no_machines"))
             elif m["proc_time"] is None or not m["proc_time_uom"]:
                 if str(m["operation"]).upper() not in ("GT BUILDING", "CURING"):
-                    bad.append((it, "no_proc_time"))
+                    bad.append((it, "no_machine_speed" if m.get("speed_blocked")
+                                else "no_proc_time"))
         for it, why in bad:
             findings.append({"sku": sku, "item": it, "issue": why,
                              "detail": (meta.get(it) or {}).get("department", ""),

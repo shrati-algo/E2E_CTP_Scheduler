@@ -1,187 +1,233 @@
-# Resolved CTP scheduler rules - the full v46e rule set in ONE file.
-# Generated from pns-ctp-scheduler/config/rules_v46e.yaml by following
-# inherit_from to the root (rules.yaml); config/history/ keeps that chain.
-# Two paths differ from the history files: bypass_cut_code_types_from and
-# wip.bypass_conversion_bom point at <data>/reference_bom (the pre-v2 BOM),
-# which refresh_ctp_sql.py --bom-v2 stages inside the data folder.
+# Resolved CTP scheduler rules - the full v46k rule set in ONE file.
+# Generated from pns-ctp-scheduler/config/rules_v46k.yaml by following
+# inherit_from to the root (rules.yaml); config/history/ keeps that chain
+# (v46f..v46k added). Two paths differ from the history files:
+# bypass_cut_code_types_from and wip.bypass_conversion_bom point at
+# <data>/reference_bom (the pre-v2 BOM), which refresh_ctp_sql.py --bom-v2
+# stages inside the data folder.
+# v46k over v46e: CAP 66 made on 901 (no CAP 66 assumptions), 901 campaign pick
+# by trolley need, CAP 66 stock converted by MHE code (STL 10:1 ASSUMED),
+# SNCT001-003 / BCFT002 cut stock converted to BRTTL (width from the BOM;
+# SNCT001/SNCT003 pre-cut rolls taken as ALTERNATIVES - open issue).
 # Change knobs here; see docs/ for what each version added.
-meta:
-  source: pns-ctp-scheduler config/rules_v46e.yaml and its inherit_from chain
-  transcribed: 2026-09-26
-  note: 'Plant-confirmed rules that override default/derived values. Where this file and the database
-    disagree, this file wins and the engine says so.
-
-    '
-  plant: CTP
-  plan: plan-latest/ (October 2026, pcr 26 / tbr 27)
-  inventory: jkplanning_CTP.opening_wip
-  run: v46e
-  variant: kit-ready building dispatch + full sequencing
-  supersedes: Upstream Business Rules.xlsx (48 rules) - see rules_upstream.yaml
-  goal: resolved v46e rule set (single file)
-  buffer_source: jkt_buffer_master_{line} only - resolved to BOM names from the database
-  sources:
-    mpq: JK_CTP_PPDS.CTP_Master_MPQ
-    buffer: JK_CTP_PPDS.CTP_Master_Buffer
-    wip: JK_CTP_PPDS.CTP_Opening_WIP
-    aging: JK_CTP_PPDS.CTP_Master_Aging
-    bom: JK_CTP_PPDS.CTP_Master_BOM_v2 (verbatim); reference_bom/ = JK_CTP_PPDS.CTP_Master_BOM
-    routing: jkplanning_CTP.jkt_routing_{line}
-    frc: JK_CTP_PPDS.CTP_Master_FRC
-  wip_snapshot: JK_CTP_PPDS.CTP_Opening_WIP @ 2026-09-29, sync 06:30
-  wip_rows: 7587
-  wip_units: 160910
-  wip_source: JK_CTP_PPDS.CTP_Opening_WIP strike 2026-09-29 06:30 + planning for codes it lacks
-  compound_rebuilt: 4,653 batches x routing batch_size = 1,017,205 kg
-  assumption: upstream ran 24 h ahead of the building plan; not visible in the 06:30 floor
-  purchased_source: CTP Data Gaps Report (2).xlsx -> data-sql/CTP_Purchased_Items.csv
-  data: a folder staged with refresh_ctp_sql.py --ppds-only --bom-v2 (BOM v2 + reference_bom/ + CTP_Master_FRC)
-linespeed:
-  enabled: true
-  rolls:
-    EG01: 15
-    EG02: 11
-    EG03: 7
-    TEG-01: 11
-    TEG-02: 9
-    CAP 66: 11
-    BPG01: 7
-  slit_inherits:
-    EGSL01:
-      parent: EG01
-      rolls: 15
-    EGSL02:
-      parent: EG02
-      rolls: 11
-    BPGSL01:
-      parent: BPG01
-      rolls: 7
-    GUM STRIP:
-      parent: TEG-02
-      rolls: 9
-    STC-WRAP:
-      parent: TEG-01
-      rolls: 11
-    TB WRAP B1144:
-      parent: EG02
-      rolls: 11
-  single_strand:
-  - BP01
-  per_machine:
-    CAP 66 - CAPSTRIP:
-      '701':
-        base_mpm: 33
-        strands: 12
-        effective: 396
-      '702':
-        base_mpm: 60
-        strands: 16
-        effective: 960
-  chaffer_strips:
-    MONOCHAF80: 4
-    MONOCHAF120: 4
-    FILLIPER2: 5
-    BRTTL SLT: 5
-    SNCT001: 6
-    SNCT002: 6
-    SNCT003: 4
-    SNCT004: 4
-    EUSNCT001: 6
-    EUSNCT003: 4
-pieces_per_cut:
-  enabled: true
-  by_operation:
-    BIAS CUTTER: 2
-    Bios cutter: 2
-    BELT CUTTER: 2
-bias_cutter:
-  enabled: true
-  rule: child demand = child_quantity x bias cutter output (chain-multiplied)
-  operations:
-  - BIAS CUTTER
-  - Bios cutter
+aging_overrides:
+  SNCT002:
+    max_h: 24
+    min_h: 0
 aging_spec:
-  enabled: true
   by_item_type:
-    Steel Belt:
-      min: 4
-      max: 96
-    CALANDARED ROLL:
-      min: 4
-      max: 72
-    Ply:
-      min: 4
-      max: 72
-    Cut Plies:
-      min: 0
-      max: 24
-    Breaker:
-      min: 0
-      max: 24
-    SLITTED MATERIAL:
-      min: 0
-      max: 24
-    Slitted Material:
-      min: 0
-      max: 24
-    PRE CUT ROLL MATERIAL:
-      min: 0
-      max: 24
-    Cap Strip:
-      min: 0
-      max: 24
-    Capstrip Mother Roll:
-      min: 0
-      max: 72
-    Edge Gum:
-      min: 2
-      max: 72
-    Edge Strip:
-      min: 0
-      max: 48
-    Steel Belt Edge Strip:
-      min: 0
-      max: 48
-    Inner Liner:
-      min: 6
-      max: 72
-    INNER LINER:
-      min: 6
-      max: 72
-    SideWall:
-      min: 2
-      max: 72
-    Tread:
-      min: 2
-      max: 72
     Bead Apex:
+      max: 48
       min: 1
-      max: 48
     Bead Bundle:
-      min: 0
       max: 48
+      min: 0
     Bead wire:
-      min: 0
       max: 4320
-    Green Tyres:
-      min: 0.25
+      min: 0
+    Breaker:
+      max: 24
+      min: 0
+    CALANDARED ROLL:
+      max: 72
+      min: 4
+    Cap Strip:
+      max: 24
+      min: 0
+    Capstrip Mother Roll:
+      max: 72
+      min: 0
+    Cut Plies:
+      max: 24
+      min: 0
+    Edge Gum:
+      max: 72
+      min: 2
+    Edge Strip:
       max: 48
-    MASTER COMPOUND:
-      min: 4
-      max: 360
+      min: 0
     FINAL COMPOUND:
-      min: 4
       max: 120
+      min: 4
+    Green Tyres:
+      max: 48
+      min: 0.25
+    INNER LINER:
+      max: 72
+      min: 6
+    Inner Liner:
+      max: 72
+      min: 6
+    MASTER COMPOUND:
+      max: 360
+      min: 4
+    PRE CUT ROLL MATERIAL:
+      max: 24
+      min: 0
+    Ply:
+      max: 72
+      min: 4
+    SLITTED MATERIAL:
+      max: 24
+      min: 0
+    SideWall:
+      max: 72
+      min: 2
+    Slitted Material:
+      max: 24
+      min: 0
+    Steel Belt:
+      max: 96
+      min: 4
+    Steel Belt Edge Strip:
+      max: 48
+      min: 0
+    Tread:
+      max: 72
+      min: 2
+  enabled: true
   open_flags:
   - silica TREAD must be 24 h, not 72 h — needs the silica code list
   - silica MASTER compound must be 72 h, not 360 h
   - silica/butyl FINAL compound must be 72 h, not 120 h
   - cobalt/butyl MASTER compound must be 24 h
   - belt-skim FINAL compound is 96 h
+aging_spec_type_alias:
+  BELT1: Steel Belt
+  BELT2: Steel Belt
+  FILLIPER: SLITTED MATERIAL
+  PLY1: Ply
+  PLY2: Ply
+assumptions:
+  absent_type_cover_h: 24
+  absent_type_skip_stocked_codes:
+  - CAP 66
+  buffer_median_for_missing: true
+  first_hours_cover:
+    codes:
+    - CAP30
+    - GBCAP20
+    - CAP30 - CAPSTRIP
+    - GBCAP20 - CAPSTRIP
+    - CAP30- slitted material
+    - GBCAP20- slitted material
+    - CAP30-MOTHERROLL
+    - GBCAP20-MOTHERROLL
+    - EG01
+    - EG02
+    - EG03
+    - BP01
+    - EGSL01
+    - EGSL02
+    - EGSL03
+    - TEG-01
+    - TEG-02
+    - TB WRAP B1144
+    - STC-WRAP
+    - GUM STRIP
+    hours: 8
+balance:
+  above_pct: 50
+  machines:
+  - '2403'
+  - '2404'
+  - '2405'
+bead:
+  group_by_rounds: false
+  group_by_wire_type: false
+  rule_id_inch: BR-64
+  rule_id_inch_map: BR-63
+  tbr_inch_changeover_min: 20
+  tbr_inch_from_description: true
+  winding_leads_apexing: true
+bead_gate:
+  enabled: false
+bias_cutter:
+  enabled: true
+  operations:
+  - BIAS CUTTER
+  - Bios cutter
+  rule: child demand = child_quantity x bias cutter output (chain-multiplied)
+bom:
+  skip_self_reference: true
+  walk_each_item_once: all
+buffer_aliases:
+  Appex Bead:
+  - Bead Apex
+  - APEXED BEAD
+  Bead:
+  - Bead Bundle
+  Belt:
+  - Steel Belt
+  - BELT-1
+  - BELT-2
+  - BELT-3
+  - BELT-4
+  Side wall:
+  - SideWall
+buffer_overrides: {}
+building:
+  enforce_plan_sequence: true
+  rebalance: false
+  report_incomplete_components: true
+  require_full_kit: true
+  rule_id_kit: BR-66/BR-67
+  sequence_by: plan_order
+  setup_by_actual_predecessor: true
+bypass_cut_code_types_from: reference_bom
+bypass_departments:
+- CAP PLY SLITTER
+- CUTTER
+- CUTTING
+- PLY CUTTER
+- SLITTER
+- BELT CUTTER
+- Bios cutter
+- Chaffer Slitter
+- TBR Body ply CUTTER
+- BEAD WINDING
+bypass_transfer_from_min_aging: true
+bypass_transfer_parents_from_routing: true
+campaign:
+  bigger_lots: true
+  departments:
+  - CALENDERING
+  - CALENDARING
+  - CAP PLY SLITTER
+  - SLITTER
+  - Chaffer Slitter
+  - PLY CUTTER
+  - CUTTING
+  - BELT CUTTER
+  - TBR Body ply CUTTER
+  - Bios cutter
+  - BIAS CUTTER
+  enabled: true
+  lookahead_h: 48
+  lot_window_h: 24
+  machines:
+  - '901'
+  max_campaign_h: 12
+  progressive_release: true
+  urgency_by_trolley_need: true
+  window_h: 8
 changeover:
-  source_policy: matrix_only
-  unpriced_min: 0
   allow_role_median: true
+  blackout_min: 30
+  mixing_fixed_min: 1
+  no_matrix_role:
+    '101': mixing
+    '102': mixing
+    '103': mixing
+    '104': mixing
+    '105': mixing
+    '106': mixing
+    '1802': bef extruder
+    '2201': tbr pre assembly
+    '2501': tbr doubling
+    '2502': tbr doubling
+    '701': cap strip slitter
+    '702': cap strip slitter
   role_map:
     '1001': Triplex PCR SW
     '1002': Quintoplex PCR Tread
@@ -207,82 +253,357 @@ changeover:
     '802': Belt Cutter TBR
     '901': 4 RC Calendar
     ASSUMED-BEAD WINDING: TBR Bead Winding
-  no_matrix_role:
-    '101': mixing
-    '102': mixing
-    '103': mixing
-    '104': mixing
-    '105': mixing
-    '106': mixing
-    '701': cap strip slitter
-    '702': cap strip slitter
-    '1802': bef extruder
-    '2201': tbr pre assembly
-    '2501': tbr doubling
-    '2502': tbr doubling
-  mixing_fixed_min: 1
-  blackout_min: 30
-shared_machines:
-  joint: all
-  shared_both_lines:
-  - '101'
-  - '103'
-  - '104'
-  - '105'
-  - '106'
-  - '601'
+  source_policy: matrix_only
+  unpriced_min: 0
+cold_start:
+  kit_complete_fefo: false
+  net_cut_stock: true
+curing:
+  even_lots: true
+  mould_change_min:
+    pcr: 120
+    tbr: 180
+  round: down
+cutters:
+  belts_together: true
+  once_per_shift: true
+  rule_id_belts: BR-50
+  rule_id_once: BR-56
+debug:
+  log_machines:
+  - '2403'
+  - '2404'
+  - '2405'
+dispatch:
+  balance_above_pct: 0
+  campaign_break_slack_h: 4
+  choose_when_free: all
+  depth_first: false
+  enforce_machine_exclusivity: true
+  idle_poll_h: 1
+  material_ready_beats_campaign: true
+  never_idle_pull: true
+  right_shift: false
+  scan_whole_bucket: true
+  trolley_need_bucket_h: 8
+  trolley_need_first_machines:
+  - '2403'
+  - '2404'
+  - '2405'
   - '901'
-  - '1102'
-  - '2001'
-  - '2401'
-  - '2402'
-  unregistered_shared:
-  - '1102'
-  - '2001'
-  - '2401'
-  - '2402'
+  urgency_first: true
+  work_stealing: true
+downtime:
+  assume_available_after: 2026-09-29 23:00
+  enabled: true
+  rule_id: BR-10
+  source: jkplanning_CTP.pm_mtc_downtime_schedule (76 rows)
 engine:
-  open_h: 0
   campaign_h: 72
-  policy: shift
-  flow_gap_h: 8
-  mix_window_h: 72
-  mix_mpq_batches: 5
-  max_lot_h: 8
-  lead_shelf_fraction: 0.4
-  efficiency: 1.0
-  default_master_aging_h: 360
   default_final_aging_h: 120
+  default_master_aging_h: 360
+  efficiency: 1.0
+  flow_gap_h: 8
+  lead_shelf_fraction: 0.4
+  max_lot_h: 8
+  mix_mpq_batches: 5
+  mix_window_h: 72
+  open_h: 0
+  policy: shift
   transfer_min: 10
+extrusion:
+  group_by_compound: true
+  rolling_applies_to:
+  - SideWall
+  - Tread
+  rolling_horizon_h: 24
+  rule_id_group: BR-21/BR-25/BR-32
+  rule_id_horizon: BRE-01
+fourrc_dip:
+  aliases:
+    MONOCHAFER: MONOCHAFFER
+  enabled: true
+  frc_file: CTP_Master_FRC.csv
+  machines:
+  - '901'
+frc:
+  cap66_cleanout_min: 15
+  cap66_items:
+  - CAP 66- slitted material
+  - CAP 66 - CAPSTRIP
+  - CAP66
+  creel_setup_is_changeover: false
+  creel_setup_min: 240
+  creel_setup_parallel: true
+  min_roll_items:
+  - Nychaffer
+  - TLChaffer
+  - Nylfiller
+  - WPJ011
+  min_roll_m: 200
+  ramp_down_min: 3
+  ramp_up_min: 2
+  rule_id_cap66: BR-45
+  rule_id_creel: BR-47
+  rule_id_min_roll: BR-48
+  rule_id_ramp: BR4RC-13
+  rule_id_wire_gap: BR4RC-14
+  soft:
+    BR4RC-01: TL Chaffer and Nyl Chaffer late in the fabric schedule, not together
+    BR4RC-04: Nyl Chaffer and WPJ scheduled consecutively
+    BR4RC-06: CAP 66 after the wire campaign
+  wire_to_wire_gap_h: 6
 general:
   aging_source: jkt_aging_master
-  mpq_source: jkt_mpq
   changeover_blackout_min: 30
-  rule_id_blackout: BR-14
+  mpq_source: jkt_mpq
   prefer_continuity: true
+  rule_id_blackout: BR-14
   rule_id_continuity: BR-16
+il_calendering:
+  group_by_compound: true
+  rolling_applies_to:
+  - Inner Liner
+  rolling_horizon_h: 24
+  rule_id_group: BR-41
+  rule_id_horizon: BRIL-01
+linespeed:
+  chaffer_strips:
+    BRTTL SLT: 5
+    EUSNCT001: 6
+    EUSNCT003: 4
+    FILLIPER2: 5
+    MONOCHAF120: 4
+    MONOCHAF80: 4
+    SNCT001: 6
+    SNCT002: 6
+    SNCT003: 4
+    SNCT004: 4
+  enabled: true
+  per_machine:
+    CAP 66 - CAPSTRIP:
+      '701':
+        base_mpm: 33
+        effective: 396
+        strands: 12
+      '702':
+        base_mpm: 60
+        effective: 960
+        strands: 16
+  rolls:
+    BPG01: 7
+    CAP 66: 11
+    EG01: 15
+    EG02: 11
+    EG03: 7
+    TEG-01: 11
+    TEG-02: 9
+  single_strand:
+  - BP01
+  - CAP 66
+  slit_inherits:
+    BPGSL01:
+      parent: BPG01
+      rolls: 7
+    EGSL01:
+      parent: EG01
+      rolls: 15
+    EGSL02:
+      parent: EG02
+      rolls: 11
+    GUM STRIP:
+      parent: TEG-02
+      rolls: 9
+    STC-WRAP:
+      parent: TEG-01
+      rolls: 11
+    TB WRAP B1144:
+      parent: EG02
+      rolls: 11
+lot_sizing:
+  need_span_cap_h: 24
+  whole_units: true
+machines:
+  department_aware_mixers: true
+  department_register:
+    BEAD WINDING:
+    - '2403'
+    - '2404'
+    - '2405'
+  final_on_master_mixers: true
+  mixer_roles:
+    FINAL MIXING:
+      '310': '104'
+      F270: '102'
+      K310: '104'
+    MASTER MIXING:
+      270M: '101'
+      430-1: '105'
+      430-2: '106'
+      440M: '103'
+      F270: '101'
+      F440: '103'
+      K270M: '101'
+      K430-1: '105'
+      K430-2: '106'
+  spread_all_eligible: true
+meta:
+  assumption: upstream ran 24 h ahead of the building plan; not visible in the 06:30 floor
+  buffer_source: jkt_buffer_master_{line} only - resolved to BOM names from the database
+  compound_rebuilt: 4,653 batches x routing batch_size = 1,017,205 kg
+  data: 'staged by run_pipeline.py from JK_CTP_PPDS: BOM v2 + reference_bom/ (CTP_Master_BOM) + CTP_Master_FRC
+    + opening WIP and GT inventory of the plan start day, shift A (06:30) sync'
+  goal: resolved v46k rule set (single file)
+  inventory: jkplanning_CTP.opening_wip
+  note: 'Plant-confirmed rules that override default/derived values. Where this file and the database
+    disagree, this file wins and the engine says so.
+
+    '
+  plan: any plan folder (run_pipeline.py --plan-folder); verified on plan-27oct (27-31 Oct 2026)
+  plant: CTP
+  purchased_source: CTP Data Gaps Report (2).xlsx -> data-sql/CTP_Purchased_Items.csv
+  run: v46k
+  source: pns-ctp-scheduler config/rules_v46k.yaml and its inherit_from chain (config/history/)
+  sources:
+    mpq: JK_CTP_PPDS.CTP_Master_MPQ
+    buffer: JK_CTP_PPDS.CTP_Master_Buffer
+    wip: JK_CTP_PPDS.CTP_Opening_WIP
+    aging: JK_CTP_PPDS.CTP_Master_Aging
+    bom: JK_CTP_PPDS.CTP_Master_BOM_v2 (verbatim); reference_bom/ = JK_CTP_PPDS.CTP_Master_BOM
+    routing: jkplanning_CTP.jkt_routing_{line}
+    frc: JK_CTP_PPDS.CTP_Master_FRC
+  supersedes: Upstream Business Rules.xlsx (48 rules) - see rules_upstream.yaml
+  transcribed: 2026-09-26
+  variant: kit-ready building dispatch + full sequencing
+  wip_rows: 7587
+  wip_snapshot: JK_CTP_PPDS.CTP_Opening_WIP @ 2026-09-29, sync 06:30
+  wip_source: JK_CTP_PPDS.CTP_Opening_WIP strike 2026-09-29 06:30 + planning for codes it lacks
+  wip_units: 160910
+mix_planner:
+  butyl_blocks:
+  - friendly_after: []
+    friendly_before:
+    - B99
+    - B1
+    - B2
+    mixer: '102'
+    name: final
+    prep_lot_batches: 5
+    sequence:
+    - IL3
+    - IL5
+    - 30G
+  - earliest_hour: 17
+    friendly_after:
+    - XMB98
+    - MB200
+    - MB100
+    friendly_before:
+    - XMB98
+    - MB200
+    - MB100
+    mixer: '106'
+    name: master
+    prep_lot_batches: 5
+    sequence:
+    - 29MG
+    - ML405
+    - ML605
+  butyl_campaigns:
+  - - IL3
+    - IL5
+  butyl_compounds:
+  - IL3
+  - IL5
+  - 30G
+  - 29MG
+  - ML405
+  - ML605
+  butyl_gap_wait_h: 6
+  changeover_s: 60
+  cleanout_s: 120
+  closed_loop:
+    enabled: true
+    rounds: 3
+  compound_followers:
+    ML405: MK3
+    ML406: MK3
+  cover_h: 15
+  cover_h_long: 24
+  enabled: true
+  final_cleanout_after_s: 120
+  final_target_batches_per_shift: 230
+  fourrc_machine: '901'
+  fourrc_priority_h: 8
+  friendly_compounds:
+  - B99
+  - B1
+  - B2
+  - XMB98
+  - MB200
+  - MB100
+  gap_exempt:
+  - B99
+  - B1
+  - B2
+  - MB100
+  - MB200
+  - XMB98
+  gap_h: 15
+  gap_h_long: 24
+  item_priority_h:
+    B1144: 24
+    B186: 24
+    B616M: 8
+    MB183: 24
+    MB184: 24
+    MB185: 24
+  k430_2_final_s: 120
+  k430_2_machine: '106'
+  long_items:
+  - IL3
+  - IL5
+  - B1144
+  - B186
+  - 30G
+  machine_factor:
+    T638|106: 1.034
+  max_wait_min: 15
+  shelf_margin_h: 2
+  tr100_s: 300
 mixing:
-  mpq_batches: 5
-  rule_id_mpq: BRM-01
   buffer_batches: 5
   buffer_excludes_special: true
-  rule_id_buffer: BR-77
-  sticky_stack_batches: 3
-  sticky_compounds:
-  - JT444
-  - JT466
-  rule_id_sticky: BRM-02
   butyl:
-    enabled: true
-    rule_id: BRM-03
     compounds:
     - ML405
     - ML605
     - 29Mg
+    enabled: true
     friendly_after:
     - MB100
     - MB200
     - XMB98
+    rule_id: BRM-03
+  changeover_superseded_by: changeover.mixing_fixed_min (60 s, plant data)
+  cleanout:
+    compound: TR100
+    enabled: true
+    minutes: 0
+    rule_id: BR-70
+  finals_consecutive: true
+  follow_with:
+    ML405: MK3
+    ML406: MK3
+  k4:
+    enabled: true
+    il_compounds:
+    - IL3
+    - IL5
+    machine: ''
+    rule_id: BR-68
+  mpq_batches: 5
+  once_per_shift: true
   pending_confirmation:
     BRM-04:
       enabled: false
@@ -306,155 +627,133 @@ mixing:
       enabled: false
       rule: Mixing transitions shall always incur a fixed 2-minute changeover
       would_fix: 1,235 unpriced mixer transitions
-  rule_id_changeover: BR-74
-  changeover_superseded_by: changeover.mixing_fixed_min (60 s, plant data)
-  once_per_shift: true
-  rule_id_once_per_shift: BR-73
   related_groups:
   - - IL3
     - IL5
   related_together: true
-  rule_id_related: BR-71
-  finals_consecutive: true
+  rule_id_buffer: BR-77
+  rule_id_changeover: BR-74
   rule_id_finals: BR-72
-  cleanout:
-    enabled: true
-    compound: TR100
-    minutes: 0
-    rule_id: BR-70
-  follow_with:
-    ML405: MK3
-    ML406: MK3
   rule_id_follow: BR-69
-  k4:
-    enabled: true
-    machine: ''
-    il_compounds:
-    - IL3
-    - IL5
-    rule_id: BR-68
+  rule_id_mpq: BRM-01
+  rule_id_once_per_shift: BR-73
+  rule_id_related: BR-71
+  rule_id_sticky: BRM-02
   special_compounds:
   - ML405
   - ML605
   - 29MG
-extrusion:
-  rolling_horizon_h: 24
-  rolling_applies_to:
-  - SideWall
-  - Tread
-  rule_id_horizon: BRE-01
-  group_by_compound: true
-  rule_id_group: BR-21/BR-25/BR-32
-il_calendering:
-  rolling_horizon_h: 24
-  rolling_applies_to:
-  - Inner Liner
-  rule_id_horizon: BRIL-01
-  group_by_compound: true
-  rule_id_group: BR-41
-frc:
-  ramp_up_min: 2
-  ramp_down_min: 3
-  rule_id_ramp: BR4RC-13
-  creel_setup_min: 240
-  creel_setup_parallel: true
-  creel_setup_is_changeover: false
-  rule_id_creel: BR-47
-  cap66_cleanout_min: 15
-  cap66_items:
-  - CAP 66- slitted material
-  - CAP 66 - CAPSTRIP
-  - CAP66
-  rule_id_cap66: BR-45
-  min_roll_m: 200
-  min_roll_items:
-  - Nychaffer
-  - TLChaffer
-  - Nylfiller
-  - WPJ011
-  rule_id_min_roll: BR-48
-  wire_to_wire_gap_h: 6
-  rule_id_wire_gap: BR4RC-14
-  soft:
-    BR4RC-01: TL Chaffer and Nyl Chaffer late in the fabric schedule, not together
-    BR4RC-04: Nyl Chaffer and WPJ scheduled consecutively
-    BR4RC-06: CAP 66 after the wire campaign
-cutters:
-  belts_together: true
-  rule_id_belts: BR-50
-  once_per_shift: true
-  rule_id_once: BR-56
-bead:
-  group_by_rounds: false
-  group_by_wire_type: false
-  winding_leads_apexing: true
-  tbr_inch_changeover_min: 20
-  rule_id_inch: BR-64
-  tbr_inch_from_description: true
-  rule_id_inch_map: BR-63
-unimplementable:
-  BRG-01:
-    rule: No production or changeover on a machine during its PM/MTC block
-    missing: no PM / maintenance-downtime table exists in jkplanning_CTP
-    effect: every machine is treated as available 24x7; utilisation is optimistic
-  BRM-11:
-    rule: Use Plant-approved Allowable Machine Matrix (priority P1,P2,P3)
-    missing: the workbook itself asks for a priority matrix; CTP has none
-    effect: machine choice falls back to the routing's machine list, unranked
-  BRE-02:
-    rule: Same die should not be repeated in a shift
-    missing: no die / profile attribute on any CTP extrusion item
-    effect: die-based grouping not enforced
-  BRIL-02:
-    rule: Same die/profile should not be repeated in a shift
-    missing: same - no die master
-    effect: as above, for IL calendering
-  BRB-01:
-    rule: 4-round beads scheduled together, same for 5-round
-    missing: no bead-round attribute on CTP bead items
-    effect: beads ordered by need-by only
-  BRB-02:
-    rule: Same wire type should run continuously
-    missing: no wire-type master for CTP (BTP has belt_wire_mapping; CTP does not)
-    effect: wire campaigns not formed
-  BR4RC-02:
-    rule: Deep roll length compliance
-    missing: no deep-roll master for CTP (BTP has 'Deep rolls from db.csv')
-    effect: deep-roll compliance unscored
-  BR4RC-03:
-    rule: Wire length constraint - specified length must not be exceeded
-    missing: no wire-length spec table
-    effect: wire length unbounded
-campaign:
+  sticky_compounds:
+  - JT444
+  - JT466
+  sticky_stack_batches: 3
+mpq:
+  use_master_batches: false
+mpq_aliases:
+  Bead Apex:
+  - APEXED BEAD
+  Belt:
+  - BELT-1
+  - BELT-2
+  - BELT-3
+  - BELT-4
+  Calendar Roll (spool):
+  - CALANDARED ROLL
+  Calendra Roll (Dipped Cord):
+  - CALANDARED ROLL
+  Chaffer:
+  - SLITTED MATERIAL
+  Chaffer IL( mono 80, mono 120):
+  - SLITTED MATERIAL
+  - Slitted Material
+  Ply:
+  - BODYPLY
+  Wound Bead:
+  - Bead Bundle
+pieces_per_cut:
+  by_operation:
+    BELT CUTTER: 2
+    BIAS CUTTER: 2
+    Bios cutter: 2
   enabled: true
-  lookahead_h: 48
-  max_campaign_h: 12
-  departments:
-  - CALENDERING
-  - CALENDARING
-  - CAP PLY SLITTER
-  - SLITTER
-  - Chaffer Slitter
-  - PLY CUTTER
-  - CUTTING
-  - BELT CUTTER
-  - TBR Body ply CUTTER
-  - Bios cutter
-  - BIAS CUTTER
-  machines:
+purchased_codes:
+- TBA827
+- TCA313
+- MS43
+- MS70
+- MB100
+- MTCM313
+purchased_item_types:
+- MASTER COMPOUND
+shared_machines:
+  joint: all
+  shared_both_lines:
+  - '101'
+  - '103'
+  - '104'
+  - '105'
+  - '106'
+  - '601'
   - '901'
-  window_h: 8
-  bigger_lots: true
-  lot_window_h: 24
-  progressive_release: true
-aging_overrides:
-  SNCT002:
-    min_h: 0
-    max_h: 24
+  - '1102'
+  - '2001'
+  - '2401'
+  - '2402'
+  unregistered_shared:
+  - '1102'
+  - '2001'
+  - '2401'
+  - '2402'
+targets:
+  cured_per_day_pcr: 13500
+  cured_per_day_tbr: 3500
+tda_inline:
+  apex_departments:
+  - TBR APEXED BEAD ASSEMBLY
+  enabled: true
+  winding_departments:
+  - BEAD WINDING
+unimplementable:
+  BR4RC-02:
+    effect: deep-roll compliance unscored
+    missing: no deep-roll master for CTP (BTP has 'Deep rolls from db.csv')
+    rule: Deep roll length compliance
+  BR4RC-03:
+    effect: wire length unbounded
+    missing: no wire-length spec table
+    rule: Wire length constraint - specified length must not be exceeded
+  BRB-01:
+    effect: beads ordered by need-by only
+    missing: no bead-round attribute on CTP bead items
+    rule: 4-round beads scheduled together, same for 5-round
+  BRB-02:
+    effect: wire campaigns not formed
+    missing: no wire-type master for CTP (BTP has belt_wire_mapping; CTP does not)
+    rule: Same wire type should run continuously
+  BRE-02:
+    effect: die-based grouping not enforced
+    missing: no die / profile attribute on any CTP extrusion item
+    rule: Same die should not be repeated in a shift
+  BRG-01:
+    effect: every machine is treated as available 24x7; utilisation is optimistic
+    missing: no PM / maintenance-downtime table exists in jkplanning_CTP
+    rule: No production or changeover on a machine during its PM/MTC block
+  BRIL-02:
+    effect: as above, for IL calendering
+    missing: same - no die master
+    rule: Same die/profile should not be repeated in a shift
+  BRM-11:
+    effect: machine choice falls back to the routing's machine list, unranked
+    missing: the workbook itself asks for a priority matrix; CTP has none
+    rule: Use Plant-approved Allowable Machine Matrix (priority P1,P2,P3)
+validation:
+  shelf_life_is_warning: true
 virtual_wip:
   enabled: false
-  tier1_tyres: 6000
-  tier3_days: 1
+  mother_rolls:
+  - CALANDARED ROLL
+  - Capstrip Mother Roll
+  - Rubberized Ply
   never_synthesise:
   - MASTER COMPOUND
   - FINAL COMPOUND
@@ -484,302 +783,30 @@ virtual_wip:
   - NYLON2&3
   - PRE ASSEMBLY
   - SQUEEGEE
-  mother_rolls:
-  - CALANDARED ROLL
-  - Capstrip Mother Roll
-  - Rubberized Ply
-building:
-  sequence_by: plan_order
-  rebalance: false
-  require_full_kit: true
-  report_incomplete_components: true
-  rule_id_kit: BR-66/BR-67
-  setup_by_actual_predecessor: true
-  enforce_plan_sequence: true
-curing:
-  even_lots: true
-  round: down
-  mould_change_min:
-    pcr: 120
-    tbr: 180
-targets:
-  cured_per_day_pcr: 13500
-  cured_per_day_tbr: 3500
-machines:
-  department_aware_mixers: true
-  mixer_roles:
-    MASTER MIXING:
-      F270: '101'
-      270M: '101'
-      K270M: '101'
-      F440: '103'
-      440M: '103'
-      K430-1: '105'
-      430-1: '105'
-      K430-2: '106'
-      430-2: '106'
-    FINAL MIXING:
-      F270: '102'
-      '310': '104'
-      K310: '104'
-  department_register:
-    BEAD WINDING:
-    - '2403'
-    - '2404'
-    - '2405'
-  spread_all_eligible: true
-  final_on_master_mixers: true
-downtime:
-  enabled: true
-  source: jkplanning_CTP.pm_mtc_downtime_schedule (76 rows)
-  rule_id: BR-10
-  assume_available_after: 2026-09-29 23:00
-buffer_aliases:
-  Side wall:
-  - SideWall
-  Appex Bead:
-  - Bead Apex
-  - APEXED BEAD
-  Belt:
-  - Steel Belt
-  - BELT-1
-  - BELT-2
-  - BELT-3
-  - BELT-4
-  Bead:
-  - Bead Bundle
-mpq:
-  use_master_batches: false
-mpq_aliases:
-  Bead Apex:
-  - APEXED BEAD
-  Wound Bead:
-  - Bead Bundle
-  Calendar Roll (spool):
-  - CALANDARED ROLL
-  Calendra Roll (Dipped Cord):
-  - CALANDARED ROLL
-  Chaffer IL( mono 80, mono 120):
-  - SLITTED MATERIAL
-  - Slitted Material
-  Chaffer:
-  - SLITTED MATERIAL
-  Belt:
-  - BELT-1
-  - BELT-2
-  - BELT-3
-  - BELT-4
-  Ply:
-  - BODYPLY
-lot_sizing:
-  need_span_cap_h: 24
-  whole_units: true
-dispatch:
-  urgency_first: true
-  campaign_break_slack_h: 4
-  material_ready_beats_campaign: true
-  enforce_machine_exclusivity: true
-  scan_whole_bucket: true
-  right_shift: false
-  depth_first: false
-  balance_above_pct: 0
-  never_idle_pull: true
-  work_stealing: true
-  idle_poll_h: 1
-  trolley_need_bucket_h: 8
-  trolley_need_first_machines:
-  - '2403'
-  - '2404'
-  - '2405'
-  - '901'
-  choose_when_free: all
-buffer_overrides: {}
-purchased_item_types:
-- MASTER COMPOUND
-validation:
-  shelf_life_is_warning: true
-assumptions:
-  buffer_median_for_missing: true
-  absent_type_cover_h: 24
-  first_hours_cover:
-    hours: 8
-    codes:
-    - CAP 66
-    - CAP30
-    - GBCAP20
-    - CAP 66 - CAPSTRIP
-    - CAP30 - CAPSTRIP
-    - GBCAP20 - CAPSTRIP
-    - CAP 66- slitted material
-    - CAP30- slitted material
-    - GBCAP20- slitted material
-    - CAP 66-MOTHERROLL
-    - CAP30-MOTHERROLL
-    - GBCAP20-MOTHERROLL
-    - EG01
-    - EG02
-    - EG03
-    - BP01
-    - EGSL01
-    - EGSL02
-    - EGSL03
-    - TEG-01
-    - TEG-02
-    - TB WRAP B1144
-    - STC-WRAP
-    - GUM STRIP
-bypass_departments:
-- CAP PLY SLITTER
-- CUTTER
-- CUTTING
-- PLY CUTTER
-- SLITTER
-- BELT CUTTER
-- Bios cutter
-- Chaffer Slitter
-- TBR Body ply CUTTER
-- BEAD WINDING
-bypass_transfer_from_min_aging: true
-aging_spec_type_alias:
-  BELT1: Steel Belt
-  BELT2: Steel Belt
-  PLY1: Ply
-  PLY2: Ply
-  FILLIPER: SLITTED MATERIAL
-purchased_codes:
-- TBA827
-- TCA313
-- MS43
-- MS70
-- MB100
-- MTCM313
-mix_planner:
-  enabled: true
-  cover_h: 15
-  cover_h_long: 24
-  gap_h: 15
-  gap_h_long: 24
-  long_items:
-  - IL3
-  - IL5
-  - B1144
-  - B186
-  - 30G
-  fourrc_machine: '901'
-  gap_exempt:
-  - B99
-  - B1
-  - B2
-  - MB100
-  - MB200
-  - XMB98
-  shelf_margin_h: 2
-  changeover_s: 60
-  tr100_s: 300
-  cleanout_s: 120
-  final_cleanout_after_s: 120
-  k430_2_machine: '106'
-  k430_2_final_s: 120
-  butyl_compounds:
-  - IL3
-  - IL5
-  - 30G
-  - 29MG
-  - ML405
-  - ML605
-  friendly_compounds:
-  - B99
-  - B1
-  - B2
-  - XMB98
-  - MB200
-  - MB100
-  butyl_campaigns:
-  - - IL3
-    - IL5
-  butyl_gap_wait_h: 6
-  butyl_blocks:
-  - name: final
-    mixer: '102'
-    friendly_before:
-    - B99
-    - B1
-    - B2
-    sequence:
-    - IL3
-    - IL5
-    - 30G
-    friendly_after: []
-    prep_lot_batches: 5
-  - name: master
-    mixer: '106'
-    earliest_hour: 17
-    friendly_before:
-    - XMB98
-    - MB200
-    - MB100
-    sequence:
-    - 29MG
-    - ML405
-    - ML605
-    friendly_after:
-    - XMB98
-    - MB200
-    - MB100
-    prep_lot_batches: 5
-  compound_followers:
-    ML405: MK3
-    ML406: MK3
-  max_wait_min: 15
-  fourrc_priority_h: 8
-  item_priority_h:
-    B616M: 8
-    B1144: 24
-    B186: 24
-    MB185: 24
-    MB184: 24
-    MB183: 24
-  machine_factor:
-    T638|106: 1.034
-  closed_loop:
-    enabled: true
-    rounds: 3
-  final_target_batches_per_shift: 230
-cold_start:
-  net_cut_stock: true
-  kit_complete_fefo: false
-bom:
-  skip_self_reference: true
-  walk_each_item_once: all
-balance:
-  machines:
-  - '2403'
-  - '2404'
-  - '2405'
-  above_pct: 50
+  tier1_tyres: 6000
+  tier3_days: 1
 wip:
-  maturity_per_demand: true
-  bypass_stock_to_children: true
+  alternative_children:
+  - SNCT001
+  - SNCT003
   bypass_conversion_bom: reference_bom
-debug:
-  log_machines:
-  - '2403'
-  - '2404'
-  - '2405'
-bead_gate:
-  enabled: false
-tda_inline:
-  enabled: true
-  apex_departments:
-  - TBR APEXED BEAD ASSEMBLY
-  winding_departments:
-  - BEAD WINDING
-bypass_transfer_parents_from_routing: true
-bypass_cut_code_types_from: reference_bom
-fourrc_dip:
-  enabled: true
-  machines:
-  - '901'
-  frc_file: CTP_Master_FRC.csv
-  aliases:
-    MONOCHAFER: MONOCHAFFER
+  bypass_stock_to_children: true
+  cut_width_from_bom: true
+  extra_cut_codes:
+    tbr:
+      BCFT002: bias
+  maturity_per_demand: true
+  mhe_conversion:
+    CAP 66:
+      FAB:
+        as: CAP 66
+        factor: 1.0
+        source: same item
+      NONE:
+        as: CAP 66 - CAPSTRIP
+        factor: 0.00647
+        source: CTP_Master_BOM (0.00647 m per m, 221 SKUs)
+      STL:
+        as: CAP 66-MOTHERROLL
+        factor: 0.1
+        source: ASSUMED 10 m slitted = 1 m mother roll (user, 27 Oct 2026)

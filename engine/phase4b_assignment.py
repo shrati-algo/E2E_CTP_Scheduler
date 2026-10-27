@@ -80,7 +80,7 @@ def main() -> int:
         meta = R.apply_speed_rules(io.build_routing_meta(io.load_routing(ln), alias))
         for it, m in meta.items():
             rbm = m.get("rate_by_machine") or {}
-            base = m.get("proc_time")
+            base = m.get("rate_base") or m.get("proc_time")   # v46j: speed units
             if rbm and base and base > 0:
                 for mc, r in rbm.items():
                     if r and r > 0:

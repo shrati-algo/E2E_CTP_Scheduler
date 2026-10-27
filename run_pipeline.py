@@ -1,45 +1,62 @@
 #!/usr/bin/env python3
-"""run_pipeline.py - one command for a complete CTP end-to-end scheduling run.
+"""run_pipeline.py - one command for a complete CTP end-to-end scheduling run (v46k).
 
-    python run_pipeline.py --plan-folder plans/october_2026 --data data/ppds_snapshot \
-                           --run oct26
+    python run_pipeline.py --plan-folder "C:/path/to/plan-27oct"
+
+That is all it needs. Everything else is taken from the plant database
+(JK_CTP_PPDS) for the plan's own start day:
 
 INPUTS
-  --plan-folder  a folder holding the plan workbooks/CSVs. Files are found by
-                 name (case-insensitive):
+  --plan-folder  a folder holding the plan workbooks/CSVs, found by name
+                 (case-insensitive):
                      *building*pcr*   PCR building plan      (required)
                      *building*tbr*   TBR building plan      (required)
                      *curing*pcr*     PCR curing plan        (optional)
                      *curing*tbr*     TBR curing plan        (optional)
                  If a curing plan is absent it is derived from the building plan.
-  --data         the staged masters folder (PPDS CSV extracts: BOM, routing,
-                 changeover matrix, opening WIP, GT inventory, ...). Not kept in git;
-                 see data/README.md. The v46e rules need it staged with
-                 `refresh_ctp_sql.py --ppds-only --bom-v2`: BOM = CTP_Master_BOM_v2,
-                 reference_bom/ = the pre-v2 BOM, and CTP_Master_FRC.csv.
-  --rules        rule file (default config/rules.yaml = the resolved v46e rules)
+  --run          run name (default: v46k_<plan start date>)
+  --data         OPTIONAL: an already staged masters folder. Without it the
+                 masters are staged from the database into data/ppds_<plan day>/
+                 (reused on the next run of the same day unless --restage).
+  --restage      stage the masters again even if data/ppds_<plan day>/ exists
+  --rules        rule file (default config/rules.yaml = the resolved v46k rules)
   --out          output root (default ./outputs); results go to <out>/<run>/
 
+DATABASE (read-only)
+  Credentials come ONLY from environment variables CTP_DB_HOST, CTP_DB_PORT,
+  CTP_DB_USER, CTP_DB_PASSWORD, CTP_DB_NAME, CTP_PPDS_NAME - or from a local
+  file `db.env` in the repository root (KEY=VALUE lines, git-ignored; see
+  db.env.example). Nothing is ever written to the database.
+
 WHAT IT DOES, IN ORDER
-  0  stage      plan files -> <out>/_plans/<run>/{pcr,tbr}/pe_format/*.xlsx
-  1  curing     derive the curing anchor (only if no curing plan was given)
-  2  pipeline   engine/run_all.py  phases 0-7, both lines (joint upstream)
-  3  floor      the plant's 16-column floor schedule
-  4  validate   checks against the routing
-  5  coverage   every register machine + its hours
-  6  rules      business-rule compliance, mixing-rule compliance
-  7  workbooks  the schedule workbooks
-  8  fulfilment day-wise built / cured
-  9  report     VALIDATION_REPORT.xlsx (data blockers, assumptions, schedule gates)
- 10  bypass     BYPASS_REPORT.xlsx (cut stock -> mother roll, transfer-time checks)
+  A  plan start   the earliest StartTime of the building plans -> plan day
+  B  stock syncs  CTP_Opening_WIP and CTP_GT_Inventory: the shift-A (06:30)
+                  sync of the plan day - the floor as the plan's first shift opens
+  C  masters      engine/refresh_ctp_sql.py --ppds-only --bom-v2: BOM =
+                  CTP_Master_BOM_v2, routing = CTP_Master_Routing, reference_bom/ =
+                  CTP_Master_BOM, CTP_Master_FRC, ageing, buffer, MPQ, changeover,
+                  machine master, allowable machines, holidays, downtime, + the
+                  stock and GT syncs of B; then compound Batches -> KG
+                  (stage_wip_ppds.py); plant lists from reference/masters/
+  0  plans        plan files -> <out>/_plans/<run>/{pcr,tbr}/pe_format/*.xlsx
+  1  curing       derive the curing anchor (only if no curing plan was given)
+  S  stock split  phases 0-1 give this plan's demand; the stock is split
+                  PCR / TBR by it (stage_wip_v6.py --also-bom reference_bom
+                  --cut-to-cutting-line)
+  2  pipeline     engine/run_all.py phases 0-7, both lines (joint upstream)
+  3..10           floor schedule, validation, coverage, rule compliance,
+                  workbooks, fulfilment, VALIDATION_REPORT, BYPASS_REPORT
+  11, 12          stock present vs consumed; day-1 stock vs building
 
 EXIT CODE
-  0 if the pipeline ran and every routing validation check passed, 1 otherwise
-  (the same convention as the original run.py).
+  0 if the pipeline ran and every routing validation check passed, 1 otherwise.
+  The two machine-coverage findings (bypassed cutters / slitters idle) are known.
 """
 from __future__ import annotations
 
 import argparse
+import datetime as dt
+import json
 import os
 import pathlib
 import re
@@ -52,6 +69,10 @@ import pandas as pd
 ROOT = pathlib.Path(__file__).resolve().parent
 ENGINE = ROOT / "engine"
 NEED = ["Machine", "SKUCode", "Qty", "StartTime"]
+DB_KEYS = ("CTP_DB_HOST", "CTP_DB_PORT", "CTP_DB_USER", "CTP_DB_PASSWORD",
+           "CTP_DB_NAME", "CTP_PPDS_NAME")
+# staged by refresh_ctp_sql.py but read by no phase (5.7 M rows) - left out
+SKIP_TABLES = "CTP_Live_Inventory,CTP_Live_Inventory_Raw"
 
 
 # --------------------------------------------------------------------- input
@@ -160,11 +181,108 @@ def step(n, label, script, env, args, optional=False) -> bool:
     return True
 
 
+
+
+# ----------------------------------------------------------------- database
+def load_db_env() -> None:
+    """CTP_DB_* from the environment; a local db.env fills only what is unset."""
+    f = ROOT / "db.env"
+    if f.exists():
+        for ln in f.read_text(encoding="utf-8").splitlines():
+            ln = ln.strip()
+            if not ln or ln.startswith("#") or "=" not in ln:
+                continue
+            k, v = ln.split("=", 1)
+            k, v = k.strip(), v.strip().strip('"').strip("'")
+            if k in DB_KEYS and v and not os.environ.get(k):
+                os.environ[k] = v
+    os.environ.setdefault("CTP_PPDS_NAME", "JK_CTP_PPDS")
+    os.environ.setdefault("CTP_DB_PORT", "3306")
+
+
+def db_ready() -> list:
+    return [k for k in ("CTP_DB_HOST", "CTP_DB_USER", "CTP_DB_PASSWORD", "CTP_DB_NAME")
+            if not os.environ.get(k)]
+
+
+def plan_day(files: dict) -> tuple:
+    """(first build start, plant day). A plant day runs 07:00 -> 07:00."""
+    t = []
+    for line in ("pcr", "tbr"):
+        d = read_plan(files[("building", line)])
+        d = d[d["Qty"] > 0]
+        t.append(pd.to_datetime(d["StartTime"], errors="coerce").min())
+    start = min(x for x in t if pd.notna(x))
+    return start, (start - pd.Timedelta(hours=7)).date()
+
+
+def _ts(x) -> str:
+    return pd.Timestamp(x).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
+
+def shift_a_syncs(day) -> dict:
+    """The shift-A (06:30) syncs of CTP_Opening_WIP and CTP_GT_Inventory for `day`."""
+    sys.path.insert(0, str(ENGINE))
+    import ctpsql
+    cn = ctpsql.connect(os.environ["CTP_PPDS_NAME"])
+    try:
+        w = ctpsql.fetch("SELECT shift, updated_at, COUNT(*) AS n FROM CTP_Opening_WIP "
+                         f"WHERE inventory_date = '{day}' GROUP BY shift, updated_at "
+                         "ORDER BY updated_at", cn)
+        g = ctpsql.fetch("SELECT tyre_type, shift, updated_at, COUNT(*) AS n FROM "
+                         f"CTP_GT_Inventory WHERE inventory_date = '{day}' "
+                         "GROUP BY tyre_type, shift, updated_at ORDER BY updated_at", cn)
+    finally:
+        cn.close()
+    wa = w[w["shift"].astype(str).str.strip().str.upper() == "A"]
+    if wa.empty:
+        sys.exit(f"[FATAL] CTP_Opening_WIP has no shift-A sync on {day} (the plan start day).\n"
+                 f"  syncs that day: {w[['shift', 'updated_at', 'n']].to_dict('records')}")
+    out = {"wip": _ts(wa["updated_at"].iloc[0]), "wip_rows": int(wa["n"].iloc[0]), "gt": {}}
+    for line in ("PCR", "TBR"):
+        ga = g[(g["tyre_type"].astype(str).str.upper() == line)
+               & (g["shift"].astype(str).str.strip().str.upper() == "A")]
+        if ga.empty:
+            sys.exit(f"[FATAL] CTP_GT_Inventory has no {line} shift-A sync on {day}.\n"
+                     f"  syncs that day: {g.to_dict('records')}")
+        out["gt"][line.lower()] = _ts(ga["updated_at"].iloc[0])
+    return out
+
+
+def stage_masters(data: pathlib.Path, day, syncs: dict, env: dict) -> None:
+    """Every master from JK_CTP_PPDS + the plan day's shift-A stock and GT."""
+    data.mkdir(parents=True, exist_ok=True)
+    e = dict(env, CTP_WIP_DATE=str(day), CTP_WIP_ASOF=syncs["wip"],
+             CTP_GT_DATE=str(day), CTP_GT_ASOF=syncs["gt"]["pcr"],
+             CTP_DATA=str(data), CTP_STAGE=str(data))
+    step("C1", "masters from JK_CTP_PPDS (BOM v2, routing, FRC, ageing, ... + stock / GT)",
+         "refresh_ctp_sql.py", e,
+         ["--ppds-only", "--bom-v2", "--out", str(data), "--skip", SKIP_TABLES])
+    if syncs["gt"]["tbr"] != syncs["gt"]["pcr"]:
+        step("C1b", "TBR green tyres at their own shift-A sync", "refresh_ctp_sql.py",
+             dict(e, CTP_GT_ASOF=syncs["gt"]["tbr"]),
+             ["--ppds-only", "--bom-v2", "--out", str(data), "--only", "gt_inventory_manual_tbr"])
+    for f in (ROOT / "reference" / "masters").glob("*.csv"):
+        shutil.copy(f, data / f.name)                  # plant lists, not in the database
+    step("C2", "opening stock: compound Batches -> KG", "stage_wip_ppds.py", e, [])
+    (data / "_pipeline_stage.json").write_text(json.dumps({
+        "plan_day": str(day), "wip_sync": syncs["wip"], "gt_sync": syncs["gt"],
+        "staged_at": dt.datetime.now().isoformat(timespec="seconds"),
+        "database": os.environ.get("CTP_PPDS_NAME"),
+        "tables": {"bom": "CTP_Master_BOM_v2", "reference_bom": "CTP_Master_BOM",
+                   "routing": "CTP_Master_Routing", "wip": "CTP_Opening_WIP",
+                   "gt": "CTP_GT_Inventory", "frc": "CTP_Master_FRC"}}, indent=2),
+        encoding="utf-8")
+
+
 def main() -> int:
-    ap = argparse.ArgumentParser(description="CTP end-to-end scheduler (v46e engine).")
+    ap = argparse.ArgumentParser(description="CTP end-to-end scheduler (v46k engine).")
     ap.add_argument("--plan-folder", required=True, help="folder with the plan files")
-    ap.add_argument("--data", required=True, help="staged masters folder (PPDS extracts)")
-    ap.add_argument("--run", required=True, help="run name, e.g. oct26")
+    ap.add_argument("--run", default=None, help="run name (default v46k_<plan day>)")
+    ap.add_argument("--data", default=None,
+                    help="optional pre-staged masters folder (skips the database)")
+    ap.add_argument("--restage", action="store_true",
+                    help="stage the masters again even if data/ppds_<plan day> exists")
     ap.add_argument("--rules", default=str(ROOT / "config" / "rules.yaml"))
     ap.add_argument("--out", default=str(ROOT / "outputs"), help="output root")
     ap.add_argument("--max-presses", type=int, default=12,
@@ -172,26 +290,57 @@ def main() -> int:
     ap.add_argument("--skip-workbooks", action="store_true")
     a = ap.parse_args()
 
-    plan_folder = pathlib.Path(a.plan_folder).resolve()
-    data = pathlib.Path(a.data).resolve()
+    plan_folder = pathlib.Path(a.plan_folder).expanduser().resolve()
     rules = pathlib.Path(a.rules).resolve()
     out_root = pathlib.Path(a.out).resolve()
-    for p, what in ((plan_folder, "plan folder"), (data, "data folder"), (rules, "rule file")):
+    for p, what in ((plan_folder, "plan folder"), (rules, "rule file")):
         if not p.exists():
             sys.exit(f"[FATAL] {what} not found: {p}")
-    plan_dir = out_root / "_plans" / a.run
+    out_root.mkdir(parents=True, exist_ok=True)
     files = find_plan_files(plan_folder)
-    check_data(data, rules)
+    start, day = plan_day(files)
+    run = a.run or f"v46k_{day}"
+    plan_dir = out_root / "_plans" / run
+    load_db_env()
+
+    env = dict(os.environ)
+    env.update(CTP_PLAN_DIR=str(plan_dir), CTP_RULES=str(rules), CTP_OUT=str(out_root),
+               PYTHONIOENCODING="utf-8")
 
     print("=" * 78)
-    print(f"  CTP END-TO-END RUN   [{a.run}]")
+    print(f"  CTP END-TO-END RUN   [{run}]")
     print("=" * 78)
     print(f"  plan folder : {plan_folder}")
     for (k, ln), f in files.items():
         print(f"      {k:8s} {ln.upper()}: {f.name if f else '(none - derived)'}")
-    print(f"  masters     : {data}")
+    print(f"  plan start  : {start}   -> plan day {day} (stock as at shift A, 06:30)")
     print(f"  rules       : {rules}")
-    print(f"  outputs     : {out_root / a.run}")
+    print(f"  outputs     : {out_root / run}")
+
+    # ---- A-C. masters + the plan day's stock ---------------------------------
+    if a.data:
+        data = pathlib.Path(a.data).resolve()
+        if not data.exists():
+            sys.exit(f"[FATAL] data folder not found: {data}")
+        print(f"  masters     : {data}   (given - nothing read from the database)")
+    else:
+        data = ROOT / "data" / f"ppds_{day}"
+        stamp = data / "_pipeline_stage.json"
+        if stamp.exists() and not a.restage:
+            s = json.loads(stamp.read_text(encoding="utf-8"))
+            print(f"  masters     : {data}   (staged {s['staged_at']}; reused - --restage to refresh)")
+        else:
+            miss = db_ready()
+            if miss:
+                sys.exit("[FATAL] database credentials missing: " + ", ".join(miss) +
+                         "\n  set them as environment variables or in db.env (see db.env.example)")
+            syncs = shift_a_syncs(day)
+            print(f"  stock sync  : CTP_Opening_WIP {syncs['wip']} ({syncs['wip_rows']:,} rows)")
+            print(f"  GT sync     : CTP_GT_Inventory PCR {syncs['gt']['pcr']}, TBR {syncs['gt']['tbr']}")
+            print(f"  masters     : {data}   (staging now from {os.environ['CTP_PPDS_NAME']})")
+            stage_masters(data, day, syncs, env)
+    check_data(data, rules)
+    env.update(CTP_DATA=str(data), CTP_STAGE=str(data))
 
     # ---- 0. stage the plans ------------------------------------------------
     print(f"\n{'=' * 78}\n  [0] staging the plans\n{'=' * 78}")
@@ -203,54 +352,68 @@ def main() -> int:
     for h in (ROOT / "reference" / "plan_helpers").glob("*.csv"):
         shutil.copy(h, plan_dir / h.name)
 
-    env = dict(os.environ)
-    env.update(CTP_DATA=str(data), CTP_STAGE=str(data), CTP_PLAN_DIR=str(plan_dir),
-               CTP_RULES=str(rules), CTP_OUT=str(out_root), PYTHONIOENCODING="utf-8")
-
-    # ---- 1..9 --------------------------------------------------------------
+    # ---- 1. curing anchor ----------------------------------------------------
     if not (files[("curing", "pcr")] and files[("curing", "tbr")]):
         step(1, "deriving the curing anchor from the building plan",
              "make_curing_plan.py", env, ["--max-presses", str(a.max_presses)])
     else:
         print("\n  [1] curing plan supplied - not derived")
-    step(2, "the nine phases, both lines", "run_all.py", env, ["--run", a.run])
+
+    # ---- S. split the stock PCR / TBR by this plan's own demand -------------
+    step("S1", "this plan's demand (phases 0-1) for the stock split", "run_all.py", env,
+         ["--run", run, "--only", "phase0", "phase1"])
+    step("S2", "opening stock split PCR / TBR by that demand", "stage_wip_v6.py", env,
+         ["--split-from", run, "--also-bom", "reference_bom", "--cut-to-cutting-line"])
+
+    # ---- 2..12 ---------------------------------------------------------------
+    step(2, "the nine phases, both lines", "run_all.py", env, ["--run", run])
     step(3, "floor schedule (the plant's 16 columns)", "make_floor_schedule_v10.py", env,
-         ["--run", a.run])
+         ["--run", run])
     step(4, "validation against the routing", "validate_floor_schedule.py", env,
-         ["--run", a.run], optional=True)
+         ["--run", run], optional=True)
     step(5, "machine coverage against the plant register", "make_machine_coverage.py", env,
-         ["--run", a.run], optional=True)
-    step(6, "business-rule compliance", "br_compliance_v15.py", env, ["--run", a.run],
+         ["--run", run], optional=True)
+    step(6, "business-rule compliance", "br_compliance_v15.py", env, ["--run", run],
          optional=True)
-    step(6, "mixing-rule compliance", "mixing_compliance.py", env, ["--run", a.run],
+    step(6, "mixing-rule compliance", "mixing_compliance.py", env, ["--run", run],
          optional=True)
     if not a.skip_workbooks:
         step(7, "workbook - the plant's 6-sheet book", "make_ctp_schedule_workbook.py", env,
-             ["--run", a.run, "--out", f"CTP_{a.run}_SCHEDULE.xlsx"], optional=True)
+             ["--run", run, "--out", f"CTP_{run}_SCHEDULE.xlsx"], optional=True)
         step(7, "workbook - schedule + sums check, per line", "make_e2e_workbook_v13.py", env,
-             ["--run", a.run], optional=True)
-    step(8, "fulfilment, day by day", "make_fulfilment_report.py", env, ["--run", a.run],
+             ["--run", run], optional=True)
+    step(8, "fulfilment, day by day", "make_fulfilment_report.py", env, ["--run", run],
          optional=True)
     step(9, "VALIDATION_REPORT - data blockers, assumptions, schedule gates",
-         "make_validation_report.py", env, ["--run", a.run])
+         "make_validation_report.py", env, ["--run", run])
     step(10, "BYPASS_REPORT - cut stock converted, transfer time across cutters/slitters",
-         "make_bypass_report.py", env, ["--run", a.run], optional=True)
+         "make_bypass_report.py", env, ["--run", run], optional=True)
+    step(11, "WIP_PRESENCE_VS_CONSUMPTION - opening stock present vs used",
+         "make_wip_presence_report.py", env, ["--run", run], optional=True)
+    step(12, "DAY1_WIP_VS_BUILDING - day-1 trolleys, kit from stock, fresh parts, waits",
+         "make_day1_wip_building_report.py", env, ["--run", run], optional=True)
 
     # ---- summary -----------------------------------------------------------
-    out = out_root / a.run
+    out = out_root / run
     out.mkdir(parents=True, exist_ok=True)
     (out / "RULES_USED.txt").write_text(str(rules), encoding="utf-8")
+    st = data / "_pipeline_stage.json"
+    if st.exists():
+        shutil.copy(st, out / "DATA_STAGED.json")
     try:
         sys.path.insert(0, str(ENGINE))
         os.environ.update(CTP_OUT=str(out_root))
         import blockers as BLK
-        bp = BLK.merge_run(out_root, a.run)
+        bp = BLK.merge_run(out_root, run)
         bd = pd.read_csv(bp, encoding="utf-8-sig")
         print(f"\n  DATA BLOCKERS: {len(bd):,} row(s) -> {bp.name}")
     except Exception as e:                                   # report only
         print(f"  [WARN] blocker report unavailable: {type(e).__name__}: {e}")
 
-    print(f"\n{'=' * 78}\n  RESULT   [{a.run}]\n{'=' * 78}")
+    print(f"\n{'=' * 78}\n  RESULT   [{run}]\n{'=' * 78}")
+    if st.exists():
+        s = json.loads(st.read_text(encoding="utf-8"))
+        print(f"  stock / GT  : CTP_Opening_WIP {s['wip_sync']};  CTP_GT_Inventory {s['gt_sync']}")
     v = out / "VALIDATION.csv"
     nf = 0
     if v.exists():
@@ -267,6 +430,9 @@ def main() -> int:
         for r in t.itertuples(index=False):
             print(f"  {r.line:4s} built {r.built:>8,} / {r.build_plan:<8,} ({r.built_pct:>5.1f}%)   "
                   f"cured {r.cured:>8,} / {r.cure_plan:<8,} ({r.cured_pct:>5.1f}%)")
+        if len(t):
+            print(f"  BOTH cured {t['cured'].sum():,} / {t['cure_plan'].sum():,} "
+                  f"({100 * t['cured'].sum() / max(t['cure_plan'].sum(), 1):.1f}%)")
     print(f"\n  outputs : {out}   (start with VALIDATION_REPORT.xlsx)")
     return 1 if nf else 0
 

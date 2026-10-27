@@ -1,0 +1,11 @@
+# =====================================================================
+#  rules_v46g.yaml - v46f + 901 CAMPAIGN PICK BY TROLLEY NEED
+#  v46f made CAP 66 on 901 and showed the 901 campaign pick judging urgency
+#  by the CPM LFT, which is stale once lots are overdue: CAP 66 lot 1 (its
+#  trolleys need it 23 Oct 07:00) lost 12 picks to TBR cord lots needed
+#  24-28 Oct. Here the hold-break and the pick use the trolley-need time.
+# =====================================================================
+inherit_from: rules_v46f.yaml
+meta: {run: e2e_v46g, goal: "v46f + 901 campaign pick by trolley need", data: "data-ppds-v38-bomv2-cap66/"}
+campaign:
+  urgency_by_trolley_need: true

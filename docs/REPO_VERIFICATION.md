@@ -1,5 +1,59 @@
 # Repository verification
 
+## v46k reproduced from the plan folder alone (28 Oct 2026)
+
+The repository was brought up to **v46k**: the engine, the resolved rules and the new reports. `run_pipeline.py` now needs **only the plan folder**. The run was repeated two ways and compared file by file with the original run `pns-ctp-scheduler/outputs/e2e_v46k` (plan `plan-27oct`, 27–31 Oct 2026).
+
+### 1. On the exact v46k data (engine port check)
+```bash
+python run_pipeline.py --plan-folder plans/2026-10-27 --data <v46k data + reference_bom = 23 Oct pre-v2 BOM> --run v46k_repo_data
+python tools/compare_runs.py <pns>/outputs/e2e_v46k outputs/v46k_repo_data
+```
+**Every schedule output is identical**: lots, building, curing, stock draws, fulfilment, checks. The only differences are run identity:
+- the Run stamp;
+- BR-17 quoting the data folder's name;
+- a "stale stock" note that depended on the calendar day the run was made. That note is now suppressed when the snapshot is the plan's own start day.
+
+### 2. From the plan folder only (the intended use)
+```bash
+python run_pipeline.py --plan-folder plans/2026-10-27
+python tools/compare_runs.py <pns>/outputs/e2e_v46k outputs/v46k_2026-10-27
+```
+- **The pipeline found the same syncs by itself:**
+  - `CTP_Opening_WIP` 2026-10-27 **06:31:17.841** (13,333 rows);
+  - `CTP_GT_Inventory` PCR / TBR 2026-10-27 **06:30:00**.
+- **Fresh staging today vs the v46k data:**
+  - **identical:** BOM v2, routing, ageing, buffer, MPQ, machine master, holidays, downtime, opening stock, green tyres;
+  - **changed in the database since v46k was staged:** the allowable-builder table, 10 changeover pairs, and the pre-v2 `CTP_Master_BOM`. `CTP_Master_FRC` differs in timestamps only.
+- **Result: 106 of 110 items identical**, including every schedule, stock, building, curing, fulfilment and blocker file.
+- **Headline, both runs:**
+  - PCR built 59,894 / cured **51,020**;
+  - TBR built 11,887 / cured **9,680**;
+  - **60,700 of 74,422 eligible tyres = 81.6%**;
+  - all schedule checks pass.
+- **The 4 differences are informational:**
+  - Run stamp;
+  - BR-17 (data folder name);
+  - two diagnostic columns that count SKUs per cut-code path (`tbr/phase2_bypass_stock_conversion.csv`);
+  - the listed minimum ageing of 7 bypassed parents (`pcr/phase2_bypass_transfer.csv`).
+
+  All four come from today's pre-v2 BOM. No quantity or time changes.
+- **Routing validation: 12 of 14.** The two known machine-coverage findings: bypassed cutters / slitters idle by design, TBR 2501 / 2502 idle on BOM v2.
+- `python -m unittest discover tests`: 7 tests pass.
+
+### What moved into the repository for v46k
+
+| file | change |
+|---|---|
+| `run_pipeline.py` | plan folder only: plan day from the plan; shift-A (06:30) stock / GT syncs of that day; full staging from `JK_CTP_PPDS` into `data/ppds_<day>/` (reused, `--restage`); stock split by the plan's own demand; steps 11–12 |
+| `engine/*` | the v46f–v46k engine (CAP 66 on 901, 901 pick by trolley need, MHE conversion, SNCT / BCFT002 → BRTTL, cut code to its cutting line); `refresh_ctp_sql.py --skip`; stage `mhe_code` |
+| `engine/stage_wip_v6.py`, `stage_wip_mhe.py` | stock split PCR / TBR (`--also-bom`, `--cut-to-cutting-line`); MHE code for older stagings |
+| `engine/make_wip_presence_report.py`, `make_day1_wip_building_report.py` | stock present vs used; day-1 kits, fresh parts, waits |
+| `config/rules.yaml` | resolved v46k rules; `config/history/` + `rules_v46f…v46k` |
+| `reference/masters/` | `PLANT_MACHINE_REGISTER.csv`, `CTP_Purchased_Items.csv` (plant lists, not in the database) |
+| `plans/2026-10-27/` | the 27–31 Oct plan used for the check |
+| `RUN_STEP_BY_STEP.md`, `db.env.example`, `data/README.md` | how to run on a new machine; credentials only from env / git-ignored `db.env` |
+
 ## v46e reproduced (27 Oct 2026)
 
 The repository was brought up to **v46e** and the run was repeated **from this repository**. It was then compared file by file with the original run `pns-ctp-scheduler/outputs/e2e_v46e`.

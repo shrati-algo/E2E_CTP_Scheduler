@@ -1,0 +1,21 @@
+# =====================================================================
+#  rules_v46h.yaml - v46g + CAP 66 STOCK CONVERTED TO MOTHER ROLL BY MHE CODE
+#  Every CAP 66 stock row is booked as item_code `CAP 66`; the MHE code says
+#  which form it is in. Each form is turned into mother-roll metres (CAP 66,
+#  made on 901) before netting. Data: data-ppds-v38-bomv2-cap66-mhe/ = the
+#  v46g data with `mhe_code` added to the staged stock (stage_wip_mhe.py).
+# =====================================================================
+inherit_from: rules_v46g.yaml
+meta: {run: e2e_v46h, goal: "v46g + CAP 66 stock to mother roll by MHE code", data: "data-ppds-v38-bomv2-cap66-mhe/"}
+wip:
+  mhe_conversion:
+    "CAP 66":
+      # 4RC/FAB/nnn - the mother roll itself, off the 4-roll calender
+      FAB:  {as: "CAP 66",            factor: 1.0,     source: "same item"}
+      # 4RC/STL/nnn - slitted material / pre-cap strip off the slitter.
+      # NO BOM HAS THIS STEP: CAP 66-MOTHERROLL is only in the routing.
+      # ASSUMED (user, 27 Oct 2026): 10 m slitted = 1 m calender mother roll.
+      STL:  {as: "CAP 66-MOTHERROLL", factor: 0.1,     source: "ASSUMED 10 m slitted = 1 m mother roll (user, 27 Oct 2026)"}
+      # empty MHE - 10 mm cap strip off the cutter.
+      # CTP_Master_BOM: CAP 66 - CAPSTRIP -> CAP 66 at 0.00647 m/m, same on all 221 SKUs
+      NONE: {as: "CAP 66 - CAPSTRIP", factor: 0.00647, source: "CTP_Master_BOM (0.00647 m per m, 221 SKUs)"}

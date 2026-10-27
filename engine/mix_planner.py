@@ -130,7 +130,9 @@ class MixPlanner:
 
     def dur(self, k, m):
         f = self.factor.get((self.U(self.L[k]["item"]), str(m)), 1.0)
-        return self.L[k]["dur"] * f
+        # v46j: the lot's own time on THIS mixer (all_machine_spec cycle + batch)
+        d = (self.L[k].get("dur_by_m") or {}).get(str(m))
+        return (d if d is not None else self.L[k]["dur"]) * f
 
     def is_long(self, it):
         return self.U(it) in self.long_items or self.U(it) in self.fourrc

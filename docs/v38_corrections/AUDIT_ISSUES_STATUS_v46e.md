@@ -92,10 +92,12 @@ Every "now" figure below was measured on v46e.
   - TBR built 11 / 14 / 38%.
 - **Now:** opening stock **is** used: 171,605 PCR and 129,968 TBR stock units.
 
-  | Built on day | 1 | 2 | 3 |
+  | Green tyres built on day (each tyre counted on the day it is made) | 1 | 2 | 3 |
   |---|---|---|---|
-  | PCR | **34%** | 75% | 116% |
-  | TBR | **26%** | 93% | 118% |
+  | PCR | **26%** (3,312 / 12,953) | 73% | 112% |
+  | TBR | **25%** (665 / 2,711) | 72% | 124% |
+
+  A day above 100% is catch-up of earlier backlog. Each tyre is counted once, on the day it comes off the builder (`tyres_built` in `FULFILMENT_DAYWISE_v15.csv`). Counted per whole trolley at its finish instead (`built` column), day 1 is 14% PCR / 19% TBR.
 
 - **Still open:** day 1. Every trolley still needs about 6–7 parts made fresh, and stock covers most of each kit but not all of it.
   - Details: [WIP_AVAILABLE_BUT_NO_BUILDING.md](WIP_AVAILABLE_BUT_NO_BUILDING.md).

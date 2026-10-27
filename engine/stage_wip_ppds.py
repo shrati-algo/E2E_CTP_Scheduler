@@ -57,7 +57,7 @@ def top_up(w: pd.DataFrame, sync: str, cut: str) -> pd.DataFrame:
     q = ("SELECT production_id, produced_time, item_code AS itemcode, item_type, "
          "unit, inventory, max_aging AS MaxAging, max_aging_unit AS MaxAgingUnit, "
          "min_aging AS MinAging, min_aging_unit AS MinAgingUnit, inventory_date, "
-         "shift, updated_at AS updatedAt FROM CTP_Opening_WIP "
+         "shift, updated_at AS updatedAt, mhe_code FROM CTP_Opening_WIP "
          f"WHERE updated_at = '{sync}' AND produced_time > '{have_to}' "
          f"AND produced_time <= '{cut}'")
     add = ctpsql.fetch(q, ctpsql.connect(ctpsql.PPDS_DB))

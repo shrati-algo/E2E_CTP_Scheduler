@@ -289,9 +289,17 @@ def main() -> int:
     for r in lots.itertuples(index=False):
         m = (_meta.get(r.line) or {}).get(r.item_code)
         rbm = (m or {}).get("rate_by_machine") or {}
-        base = (m or {}).get("proc_time")
+        base = (m or {}).get("rate_base") or (m or {}).get("proc_time")
         mr = rbm.get(str(r.machine))
-        if mr and base and abs(mr - base) > 1e-9 and base > 0:
+        # v46j: all_machine_spec gives this machine's own speed (and, for a
+        # mixer, its own cycle and batch weight) - time the lot from it directly
+        _md = (io.machine_duration_min(r.lot_qty, m, r.machine)
+               if (m or {}).get("speed_source") == "all_machine_spec" else None)
+        if _md is not None:
+            if abs(_md / 60.0 - r.duration_h) > 1e-9:
+                _n_ret += 1
+            _new.append(_md / 60.0)
+        elif mr and base and abs(mr - base) > 1e-9 and base > 0:
             _new.append(r.duration_h * base / mr)
             _n_ret += 1
         else:
@@ -522,6 +530,13 @@ def main() -> int:
     # Line speed is untouched: it is the routing's proc_time, as everywhere.
     CAMP_M = {str(x).strip() for x in (R.rule("campaign.machines", []) or [])}
     CAMP_WIN = pd.Timedelta(hours=float(R.rule("campaign.window_h", 8) or 8))
+    # v46f: the campaign hold-break and pick on 901 judged urgency by the CPM
+    # LFT. Once every lot is overdue that LFT is stale: a TBR cord lot whose
+    # trolley needs it on the 28th beat CAP 66 needed on the 23rd for 12 picks
+    # in a row. With this rule, urgency is the trolley-need time (the v45b
+    # queue key), falling back to LFT where a lot has none.
+    CAMP_BY_NEED = str(R.rule("campaign.urgency_by_trolley_need", False)).lower() in (
+        "1", "true", "on", "yes")
 
     def co_peek(m, a, b):
         """Changeover minutes from the matrix, for RANKING only (no counters)."""
@@ -794,6 +809,7 @@ def main() -> int:
                 except Exception:
                     pass
         ML = {}
+        lot_qty_of = dict(zip(lots["key"], pd.to_numeric(lots["lot_qty"], errors="coerce").fillna(0.0)))
         for k in mix_keys:
             it = item[k]
             el = _elig.get(k) or [str(mach_of.get(k))]
@@ -813,7 +829,19 @@ def main() -> int:
             else:
                 need = lft[k] if pd.notna(lft[k]) else open_at
                 last_use = need + pd.Timedelta(hours=span_h.get(k, 0.0)) + mn + transfer
+            _mm = None
+            for _ln in [line_of[k]] + [x for x in lines if x != line_of[k]]:
+                _mm = (_meta.get(_ln) or {}).get(it)
+                if _mm:
+                    break
+            _dbm = {}
+            if (_mm or {}).get("spec_mix"):
+                for _m in el:
+                    _x = io.machine_duration_min(lot_qty_of.get(k, 0.0), _mm, _m)
+                    if _x is not None:
+                        _dbm[str(_m)] = pd.Timedelta(minutes=_x)
             ML[k] = {"item": it, "line": line_of[k], "dur": dur[k], "elig": el,
+                     "dur_by_m": _dbm,
                      "need": need, "last_use": last_use, "max_age": ma,
                      "min_age": mn, "ready": open_at,
                      "preds": [q for q in pred.get(k, ()) if q in _mixset]}
@@ -1134,12 +1162,18 @@ def main() -> int:
         # yields when another releasable lot cannot afford to wait.
         _break = False
         _camp = str(m) in CAMP_M
+        def _urg(l_):
+            if CAMP_BY_NEED:
+                v_ = tneed.get(l_)
+                if v_ is not None and pd.notna(v_):
+                    return v_
+            return lft.get(l_)
         if _camp and prev in allowed and len(allowed) > 1:
-            _lp = lft.get(allowed[prev][0][-1])
+            _lp = _urg(allowed[prev][0][-1])
             for _k, _h in allowed.items():
                 if _k == prev:
                     continue
-                _f2 = lft.get(_h[0][-1])
+                _f2 = _urg(_h[0][-1])
                 if (_f2 is not None and pd.notna(_f2) and _lp is not None
                         and pd.notna(_lp) and _f2 < _lp - CAMP_WIN):
                     _break = True
@@ -1184,7 +1218,7 @@ def main() -> int:
 
             pick = min(allowed, key=_rank)
             if _camp and prev and len(allowed) > 1:
-                _lf = {k: lft.get(v[0][-1]) for k, v in allowed.items()}
+                _lf = {k: _urg(v[0][-1]) for k, v in allowed.items()}
                 _valid = [x for x in _lf.values() if x is not None and pd.notna(x)]
                 if _valid:
                     _best = min(_valid)
