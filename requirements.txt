@@ -4,4 +4,4 @@ numpy==2.2.6
 openpyxl==3.1.5
 PyYAML==6.0.2
 # reads the plant database JK_CTP_PPDS (run_pipeline.py stages the masters itself)
-PyMySQL==1.4.6
+PyMySQL==1.1.2
