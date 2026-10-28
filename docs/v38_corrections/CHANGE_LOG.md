@@ -6,6 +6,157 @@ All versions use the same input data (`data-ppds-v38`) and the same October plan
 
 ---
 
+## Phase-wise test reports on every run (28 Oct)
+
+**What changed:** new step 13 of `run_pipeline.py`. `phased-testing/phase_tests.py` writes `phased-testing/reports/<schedule_id>/`:
+- `TEST_CASES_PHASE1..7.md` in the `test-report-phasewise` format, with **every check evaluated on the run** and its evidence;
+- `SUMMARY.md`, `checks.csv`, `result.json`.
+
+The folder name is the run's `schedule_id`, the same ID as in `CTP_Schedule_Floor`. Documented in `phased-testing/README.md`.
+
+**Mapping of report phases to the engine:**
+
+| Report | Engine |
+|---|---|
+| 1 Demand Explosion | phase 0/1 |
+| 2 Lot Sizing | phase 2/3 |
+| 3 DAG | phase 4 edges |
+| 4 CPM | phase 4 times |
+| 5 Placement | phase 4b/5 |
+| 6 Curing Revision | phase 7 |
+| 7 Schedule Validation | floor schedule, checks, gates, database copy |
+
+The step is optional: a failing phase is reported, never stops the run. `phased-testing/reports/` is git-ignored.
+
+**Fix found on the way:** `DATA_STAGED.json` was copied into the run folder only in the final summary. It is now copied straight after staging, so later steps know the plan day and snapshots.
+
+**End-to-end test:** `run_pipeline.py`, 27 Oct v46k inputs, run `v46k_e2e_phasetest2`, `schedule_id` `20261028_205647_v46k`.
+- 60,700 / 74,422 cured, identical to v46k.
+- 5,549 rows in `CTP_Schedule_Floor`, read-back PASS.
+- Phase reports: **all 7 phases OK**, 104 PASS, 9 WARN, 0 FAIL, 0 ERROR.
+
+---
+
+## CTP_Schedule_Floor: changeover_min filled on every row (28 Oct)
+
+`changeover_min` was empty on the 2,099 later shift pieces of lots that run across a shift change. The changeover happens once, before the lot, and is on the lot's first piece. **The later pieces now carry 0**, so the column is never empty.
+
+Test schedule `2026-10-28 19:17:53` was rewritten (`--replace`):
+- 0 empty values;
+- changeover time: upstream 140.7 h, building 48.8 h, curing 318.0 h;
+- validation PASS.
+
+---
+
+## CTP_Schedule_Floor: new column `tyre_type` (28 Oct)
+
+**Table change:**
+```sql
+ALTER TABLE CTP_Schedule_Floor ADD COLUMN tyre_type VARCHAR(8) DEFAULT NULL
+  COMMENT 'PCR / TBR - the line the row is scheduled for' AFTER schedule_shift
+```
+
+**How it is filled:** PCR or TBR from the floor-schedule file the row comes from, on every row. Shared machines carry the line of their lot.
+
+**Not changed:** the columns with no data source (`component_number`, `mhe`, `mhe_count`, `die`, `preformer`) and the empty `section` values (machines missing from `CTP_Machine_Master`).
+
+**Validation:** now also checks `tyre_type` row by row, and the row count per line.
+
+---
+
+## Complete schedule saved to JK_CTP_PPDS.CTP_Schedule_Floor (28 Oct)
+
+**What changed:** step 12 of `run_pipeline.py` writes the complete schedule to `CTP_Schedule_Floor` after every run (`pipeline/persist_floor.py`). It covers upstream, building and curing, one row per lot piece per shift. The rows are then read back and checked. The output files are unchanged.
+- **Schedule ID:** `YYYYMMDD_HHMMSS_<version>`, from the run start time and `meta.run` (v46k). It is made once per run and written to `SCHEDULE_ID.json`.
+  - The table's `schedule_id` is a DATETIME ("run start time of the schedule"), so it stores the timestamp part. The version cannot be stored there.
+  - **Decision: `schedule_id` stays DATETIME; no schema change.**
+- **Mapping:** every column is documented in `docs/steps/12_persist_schedule_floor.md`.
+  - `section` comes from `CTP_Machine_Master`.
+  - Curing `item` = the FG SKU, because the floor file leaves it blank.
+  - `component_number`, `mhe`, `mhe_count`, `die` and `preformer` are NULL: there is no source for them.
+- **Safety:**
+  - every value is checked against the live column types first; a failure means nothing is written and every failing value is listed;
+  - an existing `schedule_id` is never written twice (`--replace` rewrites that ID only);
+  - one transaction, with rollback on error;
+  - parameterised inserts.
+- The old dry-run `publish_schedule_sql.py` / `--sql-table` was removed. `--no-db-write` skips the write.
+- **Test-only flag:** `--test-history-plan` reads `CTP_Schedule_*Plan_History`. It needs explicit `--plan-run-id` for both lines. Normal runs read only the live tables, and a test checks this.
+
+**Validation run (27 Oct plan, v46k): `schedule_id` `20261028_191753_v46k` = `2026-10-28 19:17:53`.**
+- **Inputs:** plan history runs PCR `20261027_154658` and TBR `20261027_155919`, row-identical to v46k's Excel plans. WIP is the `CTP_Opening_WIP` 27 Oct shift-A sync of 06:31:17: 13,307 rows after the batch conversion, row-identical to v46k's staged stock.
+- **Result:** 60,700 / 74,422 cured, identical to v46k.
+- **Written:** 5,549 rows: upstream 1,039, building 529, curing 3,981.
+- **Read-back:** 0 missing, 0 unexpected, 0 duplicates, 0 field mismatches against the floor schedule. Stage totals equal. **PASS.**
+- **Defect found and fixed:** the first write stored the text "nan" as the department of the 2 rows on the stand-in machine (CWBP65). A guard now refuses text "nan" / "None". That `schedule_id` was rewritten with `--replace` and re-validated.
+
+---
+
+## Plant day = 06:30 → 06:29 (28 Oct)
+
+`run_pipeline.py` without `--date` now takes the **current plant day**. A run started from 06:30 on day 1 until 06:29 on day 2 is for **day 1**: day 1's building and curing plans and day 1's 06:30 WIP and GT. From 06:30 it is day 2. The terminal prints which day was taken and why. `--date` still overrides it. Test: `test_plant_day_runs_0630_to_0629`.
+
+---
+
+## The daily pipeline reads only the live plan tables (28 Oct)
+
+`run_pipeline.py` reads the plan every day from `CTP_Schedule_BuildingPlan` and `CTP_Schedule_CuringPlan` only. The `--plan-source history` option used for test_runv1 has been removed, so the pipeline cannot read `CTP_Schedule_*Plan_History`.
+
+---
+
+## Test run test_runv1: 27 Oct plan from the history tables (28 Oct)
+
+**Command (test only; the option has since been removed):**
+```bash
+python run_pipeline.py --date 2026-10-27 --plan-source history --plan-run-id PCR=20261027_154658,TBR=20261027_155919 --run test_runv1
+```
+
+**What the test used:**
+- The plan from `CTP_Schedule_*Plan_History`, which keeps every planner run. The two pinned runs are row-for-row the Excel plans v46k used. On 27 Oct the planner also saved later PCR runs (63,995 and 64,305 tyres); the default "newest" rule would have taken those.
+- WIP 27 Oct 06:31 (13,333 rows) and GT 27 Oct 06:30.
+- All 17 pre-flight checks pass.
+
+**Fix found by the test:** the plan is now read in table `id` order, which is the planner's own row order. The first try sorted by machine and start time. Trolley IDs changed with it, and curing came out at 60,530 instead of 60,700.
+
+**Result:**
+- PCR built 59,894, cured 51,020 (83.6 %); TBR built 11,887, cured 9,680 (72.3 %); both 60,700 / 74,422 (81.6 %). **Identical to v46k.**
+- Compared with `e2e_v46k_shiftsplit`: 106 of 106 shared items identical (`tools/compare_runs.py`), apart from 3 report-only columns:
+  - BR compliance text: the folder name;
+  - PCR `phase2_bypass_transfer.parent_min_ageing_h`: 4 h instead of 0 h on 7 belt parents, because `CTP_Master_Aging` changed since the v46k staging;
+  - TBR `phase2_bypass_stock_conversion.skus_on_path`: 15 instead of 13, because BOM v2 now has 2 more SKUs on the path.
+
+**Pipeline:** `--plan-source history` was added for this test and then removed; the daily run reads only the live tables.
+
+**New:** `SHIFT_PRODUCTION_<run>.csv/.xlsx` (step 6b) counts only what is made inside each shift. It is printed on the terminal.
+
+---
+
+## Daily pipeline from the database (28 Oct, branch v46k-db-pipeline, folder E2E_CTP_Scheduler_DB)
+
+**What changed:** `run_pipeline.py` now takes the plan from the database instead of a plan folder:
+
+```bash
+python run_pipeline.py --date <day>
+```
+
+The engine and rules are v46k, unchanged.
+- **Plan:** `CTP_Schedule_BuildingPlan` + `CTP_Schedule_CuringPlan`, `plan_start` on the day. If the planner saved the day more than once, the newest run is taken; `--plan-run-id` pins one. The rows are written in the same columns as the planner's Excel files; a test shows the engine reads them identically on the 27 Oct plan.
+- **Stock and green tyres:** the shift-A (06:30) sync of the day. The run stops on a missing or incomplete sync (under 50 % of the usual row count). `--wip-sync` / `--gt-sync-pcr` / `--gt-sync-tbr` choose a sync explicitly, and the choice is recorded in `RUN_SUMMARY.md`. There is never a silent fallback.
+- **Reports:**
+  - the floor schedule is split at shift changes;
+  - `analysis/` (day-1 starts, shift balance in two views, built-not-cured, extruder idle) runs every day.
+- **SQL:** `sql_publish/` holds the shift schedule as SQL rows plus a CREATE TABLE. It writes to the database only with `--sql-table` and `--sql-execute`.
+- **Docs:** one page per step in `docs/steps/`, and `RUN_SUMMARY.md` per run.
+
+**Test run, 28 Oct:**
+- The database holds only this plan: PCR 54,371 / TBR 14,179 tyres, 28 Oct – 1 Nov.
+- The 28 Oct shift-A WIP sync is struck at 09:46 with only 1,644 rows (usual ~13,400), so it is refused. The 25 Oct syncs and the 26 Oct A and B syncs were partial too.
+- The test used 27 Oct C (23:26, 13,662 rows), chosen explicitly.
+- Result: PCR cured 38,878 / 54,530 (71.3 %), TBR 7,334 / 10,966 (66.9 %), both 70.6 %.
+- 12 of 14 checks pass; the known machine-coverage finding fails.
+- The TBR per-line book is not written: its pivot is 582 short, the known CWBP65 stand-in machine.
+
+---
+
 ## Summary
 
 | version | what changed | cured (of eligible demand) | checks |

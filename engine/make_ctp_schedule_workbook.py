@@ -130,12 +130,13 @@ def main() -> int:
         f = floor[ln]
         dep = f["department"].astype(str)
         for r in f[dep == "BUILDING"].itertuples(index=False):
-            bld_gen[(ln, str(r.lot_id))] = (str(r.prod_id or ""),
-                                            str(r.consumption_id or ""))
+            # setdefault: a trolley split across shifts keeps its FIRST piece's id
+            bld_gen.setdefault((ln, str(r.lot_id)), (str(r.prod_id or ""),
+                                                     str(r.consumption_id or "")))
         for r in f[dep == "CURING"].itertuples(index=False):
             k = (ln, str(r.machine).strip(),
                  pd.Timestamp(r.start_time).round("1s"))
-            cur_gen[k] = (str(r.prod_id or ""), str(r.consumption_id or ""))
+            cur_gen.setdefault(k, (str(r.prod_id or ""), str(r.consumption_id or "")))
 
     wb = Workbook()
     wb.remove(wb.active)

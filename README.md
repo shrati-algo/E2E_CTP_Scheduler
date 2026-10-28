@@ -6,24 +6,49 @@ End-to-end production scheduler for the CTP plant (PCR + TBR).
 - **What it schedules:** every upstream lot, from mixing through calendering, extrusion and beads to building and curing. It keeps the plan's machine and sequence on builders and presses.
 - **What it reports:** what can be built and cured, day by day.
 
-**One command, only a plan folder:**
+**This branch (`v46k-db-pipeline`): one command per plant day, everything from the database.**
 
 ```bash
 pip install -r requirements.txt
-cp db.env.example db.env      # fill in the read-only database login (git-ignored)
-python run_pipeline.py --plan-folder "C:/path/to/plan-folder"
+cp db.env.example db.env      # fill in the database login (git-ignored)
+python run_pipeline.py                      # the current plant day
+python run_pipeline.py --date 2026-10-28    # a given plant day
 ```
 
-Step-by-step guide: **[RUN_STEP_BY_STEP.md](RUN_STEP_BY_STEP.md)**.
+| Read from `JK_CTP_PPDS` | For plant day D |
+|---|---|
+| **Checked first** | building plan, curing plan, WIP and GT updated and complete for D. PASS / WARN / FAIL on the terminal and in the log; **any FAIL and nothing runs** |
+| Plan | `CTP_Schedule_BuildingPlan` + `CTP_Schedule_CuringPlan`, `plan_start` on D (newest planner run if saved more than once) |
+| Stock | `CTP_Opening_WIP`, the **shift-A (06:30) sync of D**. Refused if incomplete |
+| Green tyres | `CTP_GT_Inventory`, the shift-A sync of D, per line |
+| Masters | BOM `CTP_Master_BOM_v2`, routing `CTP_Master_Routing`, `CTP_Master_FRC`, ageing, buffer, MPQ, changeover, machines, allowable builders, holidays, downtime |
 
-**What it does on its own:**
-- reads the plan start;
-- takes the opening stock (`CTP_Opening_WIP`) and green tyres (`CTP_GT_Inventory`) from the **shift-A (06:30) sync of the plan's first day**;
-- stages every master from `JK_CTP_PPDS`: BOM `CTP_Master_BOM_v2`, routing `CTP_Master_Routing`, `CTP_Master_FRC`, ageing, buffer, MPQ, changeover, machines, holidays, downtime;
-- splits the stock PCR / TBR by the plan's own demand;
-- schedules both lines and writes all reports to `outputs/v46k_<plan day>/`.
+**Outputs:** `outputs/v46k_db_<D>/`, everything the v46k run wrote, plus:
+- the shift-split floor schedule;
+- `analysis/`: day-1 machine starts, shift load balance, built-not-cured, extruder idle;
+- **the complete schedule written to `JK_CTP_PPDS.CTP_Schedule_Floor`** (upstream + building + curing, one row per lot piece per shift) under the run's `schedule_id` `YYYYMMDD_HHMMSS_v46k` (the table stores its timestamp), then read back and checked; details in `db_persist/`;
+- **phase-wise test reports** of the run in `phased-testing/reports/<schedule_id>/` (7 phases, every check evaluated; see `phased-testing/README.md`);
+- `RUN_SUMMARY.md`: **start here**.
 
-**Verified:** on the 27 Oct 2026 plan (`plans/2026-10-27/`) it reproduces run **v46k**: **60,700 of 74,422 eligible tyres cured (81.6%)**, PCR 51,020, TBR 9,680. Details: `docs/REPO_VERIFICATION.md`.
+**Docs:**
+- every step has its own page: **[docs/steps/00_OVERVIEW.md](docs/steps/00_OVERVIEW.md)**;
+- how to run it on a new machine: **[RUN_STEP_BY_STEP.md](RUN_STEP_BY_STEP.md)**.
+
+| argument | meaning |
+|---|---|
+| `--date` | plant day `YYYY-MM-DD`. Default: the **current plant day**. A plant day runs **06:30 → 06:29 next morning**, so a run from 06:30 on 28 Oct to 06:29 on 29 Oct is for 28 Oct: its plans, its 06:30 stock, its 06:30 GT |
+| `--run` | run name (default `v46k_db_<day>`) |
+| `--plan-run-id` | pin the planner run, e.g. `PCR=20261028_162333,TBR=20261028_163653` |
+| `--wip-sync`, `--gt-sync-pcr`, `--gt-sync-tbr` | use an explicit snapshot (`updated_at`) when the day's shift-A sync is missing or incomplete; recorded in the summary |
+| `--min-snapshot-ratio` | a snapshot below this share of the usual row count is refused (default 0.5) |
+| `--restage` | read the masters from the database again |
+| `--skip-workbooks`, `--skip-analysis` | leave those steps out (faster) |
+| `--check-only` | run only the pre-flight checks (are the day's tables updated?) and stop |
+| `--no-db-write` | prepare and check the `CTP_Schedule_Floor` rows, write nothing |
+| `--test-history-plan` | **test only**: plan from `CTP_Schedule_*Plan_History`; needs `--plan-run-id` for both lines |
+| `--rules`, `--out` | rule file (default `config/rules.yaml`, v46k), output root |
+
+The engine is v46k, unchanged. On the 27 Oct plan, v46k cured **60,700 of 74,422 eligible tyres (81.6 %)**; see `docs/REPO_VERIFICATION.md`. The database plan is put into exactly the columns the engine read from the Excel plans; a test checks this on the 27 Oct plan.
 
 **What v46f–v46k add over v46e** (details in `docs/v38_corrections/CHANGE_LOG.md`):
 
@@ -37,22 +62,15 @@ Step-by-step guide: **[RUN_STEP_BY_STEP.md](RUN_STEP_BY_STEP.md)**.
 
 **Reports added:** `WIP_PRESENCE_VS_CONSUMPTION_<run>.xlsx` (stock present vs used, cut / slit conversion check, CAP 66) and `DAY1_WIP_VS_BUILDING_<run>.xlsx` (every day-1 trolley: kit from stock, parts made fresh, how long each holds the trolley).
 
-| argument | meaning |
-|---|---|
-| `--plan-folder` | folder with the plan files, found by name: `*building*pcr*`, `*building*tbr*` (required), `*curing*pcr*`, `*curing*tbr*` (optional; derived if absent) |
-| `--run` | run name (default `v46k_<plan day>`); outputs go to `<out>/<run>/` |
-| `--restage` | read the masters from the database again (otherwise `data/ppds_<plan day>/` is reused) |
-| `--data` | use an already staged masters folder instead of the database |
-| `--rules` | rule file (default `config/rules.yaml`, the resolved v46k rules) |
-| `--out` | output root (default `outputs/`) |
-| `--skip-workbooks` | skip the two schedule workbooks (faster) |
-
-**Exit code:** 0 when the run completed and every routing-validation check passed, 1 otherwise. On the reference data it exits 1 because of two known machine-coverage findings: the bypassed cutters and slitters are idle by design. The schedule checks in `VALIDATION_REPORT.xlsx` all pass.
+**Exit code:** 0 when the run completed and every routing-validation check passed, 1 otherwise; 2 when a pre-flight check failed (nothing ran); 3 when a required step failed; 4 when the schedule was made but writing it to `CTP_Schedule_Floor` (or its read-back check) failed. On the reference data it exits 1 because of two known machine-coverage findings: the bypassed cutters and slitters are idle by design. The schedule checks in `VALIDATION_REPORT.xlsx` all pass.
 
 ## Repository layout
 
 ```
-run_pipeline.py          the one command (plan folder -> masters + stock from the DB -> schedule -> reports)
+run_pipeline.py          the one command (plan + stock + masters from the DB -> schedule -> reports -> analysis)
+pipeline/                preflight.py, plan_from_db.py, stock_snapshot.py, shift_production.py, persist_floor.py, db.py
+analysis/                day-1 starts, shift load balance (2), built-not-cured
+docs/steps/              one page per pipeline step
 RUN_STEP_BY_STEP.md      how to run it on a new machine
 db.env.example           template for the read-only database login (copy to db.env, git-ignored)
 engine/                  the scheduler (flat Python modules, run as scripts)
@@ -79,7 +97,7 @@ config/rules.yaml        the full v46k rule set in one file (resolved)
 config/history/          the original 49-file inherit_from chain it was resolved from
 reference/               plant business-rules workbook, machine-name helpers, masters/ (plant machine register,
                          purchased-items list: not in the database)
-plans/2026-10-27/        the 27-31 Oct 2026 plan (v46k reference)
+plans/2026-10-27/        the 27-31 Oct 2026 plan as Excel (v46k reference; used by the plan-format test)
 plans/october_2026/      the 22-31 Oct plan (v45b / v46e reference)
 data/                    masters staged per plan day (git-ignored; see data/README.md)
 docs/                    what was wrong and what each version changed (start with
@@ -99,10 +117,9 @@ outputs/                 run results (git-ignored)
 ## Checking a run against a reference
 
 ```bash
-python run_pipeline.py --plan-folder plans/2026-10-27
-python tools/compare_runs.py <reference run folder> outputs/v46k_2026-10-27
+python tools/compare_runs.py <reference run folder> outputs/v46k_db_<day>
 ```
-`docs/REPO_VERIFICATION.md` records the v46k comparison (and the earlier v45b / v46e ones).
+`docs/REPO_VERIFICATION.md` records the v46k comparison (plan-folder version).
 
 ## Configuration
 

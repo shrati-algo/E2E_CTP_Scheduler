@@ -161,7 +161,7 @@ def build_line(run: str, line: str) -> pd.DataFrame:
             "_cure_ix": range(len(cu)),
         }))
     if not rows:
-        return pd.DataFrame(columns=COLS), []
+        return pd.DataFrame(columns=COLS + SPLIT_COLS), []
 
     d = pd.concat(rows, ignore_index=True)
     d = d[d["start_time"].notna()].sort_values(
@@ -208,13 +208,62 @@ def build_line(run: str, line: str) -> pd.DataFrame:
           "incomplete_components"] = "n/a (not kit-gated)"
     d["FG_SKU_CODE"] = [f if isinstance(f, str) and f else fg.get(str(l), "")
                         for f, l in zip(d["FG_SKU_CODE"].fillna(""), d["lot_id"])]
-    return d[COLS + ["_assumed_purchased"]], purchased_all
+    d["lot_qty"] = d["produce_qty"]
+    d["shift_part"] = "1/1"
+    if SPLIT_AT_SHIFT:
+        d = split_at_shifts(d)
+    return d[COLS + SPLIT_COLS + ["_assumed_purchased"]], purchased_all
+
+
+# v46k report fix: A LOT IS BOOKED TO EVERY SHIFT IT RUNS IN, NOT ONLY ITS FIRST.
+# Until now each row carried the lot's whole quantity in the shift it STARTED,
+# so a lot running 20:35-01:14 put all 10,948 m into shift B. 2,099 of 3,450
+# v46k rows cross a shift change, and the shift totals swung 8k / 19k / 9k on
+# calender 901 when the floor really made 8k / 14k / 14k. A crossing row is now
+# cut at 07:00 / 15:00 / 23:00 and its quantity prorated by time (the cut used
+# by phase6_floor_schedule.py). NOS rows use largest-remainder rounding so the
+# pieces sum back to the lot; curing rows stay in whole PAIRS (check 6).
+# `lot_qty` keeps the lot's full quantity, `shift_part` says "2/3" etc.
+SPLIT_COLS = ["lot_qty", "shift_part"]
+SPLIT_AT_SHIFT = True
+
+
+def split_at_shifts(d: pd.DataFrame) -> pd.DataFrame:
+    from phase6_floor_schedule import shift_rows, NOS_UOMS
+    out = []
+    for r in d.to_dict("records"):
+        st, en, q = r["start_time"], r["end_time"], float(r["produce_qty"] or 0.0)
+        if pd.isna(st) or pd.isna(en) or en <= st:
+            out.append(r)
+            continue
+        uom = str(r.get("UOM", "") or "").upper()
+        if r.get("department") == "CURING" and abs(q / 2 - round(q / 2)) < 1e-9:
+            parts = shift_rows(st, en, q / 2, uom, True)
+            for p in parts:
+                p["produce_qty"] *= 2
+        else:
+            parts = shift_rows(st, en, q, uom, uom in NOS_UOMS)
+        for i, p in enumerate(parts, 1):
+            x = dict(r)
+            x.update(start_time=p["start_time"], end_time=p["end_time"],
+                     produce_qty=p["produce_qty"], shift_part=f"{i}/{len(parts)}")
+            out.append(x)
+    s = pd.DataFrame(out)
+    s = s.sort_values(["start_time", "machine"], kind="stable").reset_index(drop=True)
+    s["date"] = s["start_time"].map(lambda t: io.plant_day(t).date())
+    s["shift"] = s["start_time"].map(io.shift_of)
+    s["prod_id"] = [f"P{i:06d}" for i in range(1, len(s) + 1)]
+    return s
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", default="e2e_v10")
+    ap.add_argument("--no-shift-split", action="store_true",
+                    help="old layout: a lot's whole quantity in its start shift")
     a = ap.parse_args()
+    global SPLIT_AT_SHIFT
+    SPLIT_AT_SHIFT = not a.no_shift_split
     OUT = io.OUT_ROOT / a.run
 
     print("\n" + "=" * 78)

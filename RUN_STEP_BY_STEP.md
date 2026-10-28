@@ -1,13 +1,16 @@
-# Running the CTP scheduler, step by step
+# Running the daily CTP schedule from the database, step by step
 
-You need: **Python 3.11+**, network access to the plant database (MySQL, read-only), and a plan folder.
+You need:
+- **Python 3.11+**;
+- network access to the plant database (MySQL);
+- the database login in a file `db.env`. It is given to you separately and is never in git.
 
 ## 1. Get the code
 
 ```bash
 git clone https://github.com/shrati-algo/E2E_CTP_Scheduler.git
 cd E2E_CTP_Scheduler
-git checkout v46k-plan-folder-pipeline
+git checkout v46k-db-pipeline
 ```
 
 ## 2. Install the Python packages (once)
@@ -19,88 +22,93 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-## 3. Give the database login (once)
+## 3. Put the database login in place (once)
 
-Copy `db.env.example` to `db.env` in the same folder and fill in host, user and password. `db.env` is git-ignored, so it never leaves your machine.
+Put `db.env` in the repository folder, or copy `db.env.example` to `db.env` and fill it in:
 
-You can set the same names as environment variables instead (`CTP_DB_HOST`, `CTP_DB_PORT`, `CTP_DB_USER`, `CTP_DB_PASSWORD`, `CTP_PPDS_NAME`).
-
-The scheduler only **reads** from `JK_CTP_PPDS`; it never writes.
-
-## 4. Put the plan files in a folder
-
-One folder, with the four plan workbooks. Files are found **by name** (case does not matter):
-
-| File name contains | What | Needed? |
-|---|---|---|
-| `building` and `pcr` | PCR building plan | yes |
-| `building` and `tbr` | TBR building plan | yes |
-| `curing` and `pcr` | PCR curing plan | optional (derived if missing) |
-| `curing` and `tbr` | TBR curing plan | optional (derived if missing) |
-
-Example: `plans/2026-10-27/`, the plan of 27–31 Oct 2026, is in the repository.
-
-## 5. Run
-
-```bash
-python run_pipeline.py --plan-folder "C:/path/to/plan-folder"
+```
+CTP_DB_HOST=...
+CTP_DB_PORT=3306
+CTP_DB_USER=...
+CTP_DB_PASSWORD=...
+CTP_PPDS_NAME=JK_CTP_PPDS
 ```
 
-For example `python run_pipeline.py --plan-folder plans/2026-10-27`.
+`db.env` is git-ignored. The same names can be set as environment variables instead.
 
-What happens (about 15 minutes):
-1. **Plan start.** The plan start is read from the building plans. 27 Oct 07:00 → **plan day 2026-10-27**.
-2. **Stock and green tyres.** Taken from the **shift-A sync (06:30) of the plan day**: `CTP_Opening_WIP` and `CTP_GT_Inventory`.
-3. **Master data.** Every master is staged from `JK_CTP_PPDS` into `data/ppds_<plan day>/`:
+## 4. Run the day
 
-   | Data | Table |
-   |---|---|
-   | BOM | `CTP_Master_BOM_v2` |
-   | Routing | `CTP_Master_Routing` |
-   | Pre-v2 BOM (cut-stock factors only) | `CTP_Master_BOM` |
-   | Dip lengths | `CTP_Master_FRC` |
-   | Others | ageing, buffer, MPQ, changeover matrix, machine master, allowable builders, holidays, downtime |
+```bash
+python run_pipeline.py                      # the current plant day
+python run_pipeline.py --date 2026-10-28    # the plan of a given plant day
+```
 
-   The next run on the same plan day reuses this folder. Use `--restage` to read the database again.
-4. **Stock split.** The opening stock is split PCR / TBR by this plan's own demand.
-5. **Scheduling and reports.** The scheduler runs for both lines, then all reports.
+**Which day.** A plant day runs **06:30 → 06:29 the next morning**. Started any time from 06:30 on day 1 until 06:29 on day 2, the run is for **day 1**: day 1's building and curing plans, and day 1's 06:30 WIP and GT snapshots. From 06:30 on day 2 it is for day 2. The terminal prints which day it took and why. `--date` overrides it.
 
-## 6. Read the results
+What happens (about 15–20 minutes; every step has a page in `docs/steps/`):
 
-Results go to `outputs/v46k_<plan day>/`:
+0. **Pre-flight checks:** are today's building plan, curing plan, WIP and GT tables updated and complete? Each check is shown as `[PASS]` / `[WARN]` / `[FAIL]`. **If any fails, nothing runs.** Only the checks: `python run_pipeline.py --check-only`.
+1. **Plan:** the day's PCR and TBR building and curing plans from `CTP_Schedule_BuildingPlan` / `CTP_Schedule_CuringPlan`.
+2. **Snapshots:** the stock (`CTP_Opening_WIP`) and green tyres (`CTP_GT_Inventory`) of the **shift-A (06:30) sync of that day**.
+3. **Masters:** BOM, routing, ageing, … staged into `data/ppds_<day>/`.
+4. **Stock split:** stock split PCR / TBR by the plan's demand.
+5. **Scheduler:** both lines.
+6. **Floor schedule:** shift-wise, lots split at shift changes.
+7–10. Checks, workbooks, fulfilment, validation report, stock reports.
+11. **Analysis:** day-1 machine starts, shift load balance, built-not-cured, extruder idle.
+12. **Database:** the complete schedule (upstream, building, curing, per shift) written to `JK_CTP_PPDS.CTP_Schedule_Floor` under this run's `schedule_id`, then read back and checked.
+13. **Phase-wise test reports:** `phased-testing/reports/<schedule_id>/`. Seven reports (`TEST_CASES_PHASE1..7.md`) plus `SUMMARY.md`, with every check evaluated on this run.
+14. **Summary:** `RUN_SUMMARY.md`.
+
+## From VS Code
+
+Open the `P&s-PROD` folder (or this repository folder) in VS Code. **Run and Debug** offers:
+- *CTP: run the current plant day (06:30 -> 06:29)*;
+- *CTP: run a chosen date*: asks for the date;
+- *CTP: checks only (chosen date)*;
+- *CTP: chosen date + explicit WIP snapshot*.
+
+The plain ▶ Run button on `run_pipeline.py` runs the current plant day (06:30 → 06:29).
+
+## 5. Read the results
+
+Results go to `outputs/v46k_db_<day>/`:
 
 | File | What it tells you |
 |---|---|
-| `VALIDATION_REPORT.xlsx` | **start here**: blocked SKUs, assumptions, schedule checks (all should PASS) |
-| `CTP_v46k_<day>_SCHEDULE.xlsx` | the plant schedule book |
-| `FULFILMENT_DAYWISE_v15.csv` | built / cured per day, per line |
-| `WIP_PRESENCE_VS_CONSUMPTION_<run>.xlsx` | opening stock present vs used, cut / slit conversion check, CAP 66 |
-| `DAY1_WIP_VS_BUILDING_<run>.xlsx` | day-1 trolleys: kit from stock, parts made fresh, how long each waits |
-| `DATA_STAGED.json` | which stock / GT sync and which tables were used |
-
-The console ends with the totals, for example:
-```
-PCR  built 59,894 / 61,607 ( 97.2%)   cured 51,020 / 61,034 ( 83.6%)
-TBR  built 11,887 / 13,411 ( 88.6%)   cured  9,680 / 13,388 ( 72.3%)
-```
-
-**Exit code** 1 is normal on this data: two known machine-coverage findings (the bypassed cutters and slitters are idle by design).
-
-## Options
-
-| Option | Meaning |
-|---|---|
-| `--run NAME` | name of the output folder (default `v46k_<plan day>`) |
-| `--restage` | read the masters from the database again |
-| `--data FOLDER` | use an already staged masters folder (no database needed) |
-| `--out FOLDER` | output root (default `outputs/`) |
-| `--skip-workbooks` | skip the two schedule workbooks (faster) |
+| `PREFLIGHT_CHECKS.md` | the pre-flight checks of this run |
+| `logs/run_<time>.log` | everything that was printed on the terminal |
+| `RUN_SUMMARY.md` | **start here**: which plan and snapshots were used, checks, fulfilment, warnings |
+| `VALIDATION_REPORT.xlsx` | data blockers, assumptions, schedule gates |
+| `CTP_<run>_SCHEDULE.xlsx` | the plant schedule book |
+| `phase5_floor_schedule_{pcr,tbr}.csv` | the shift-wise schedule, one row per machine × lot × shift |
+| `FULFILMENT_DAYWISE_v15.csv` | built / cured per day and line |
+| `analysis/` | the analysis workbooks |
+| `plan_from_db/` | the plan rows exactly as read from the database |
+| `SCHEDULE_ID.json` | the run's schedule_id (`YYYYMMDD_HHMMSS_v46k`) and the timestamp stored in `CTP_Schedule_Floor` |
+| `db_persist/` | the rows written to `CTP_Schedule_Floor`, the write result and the read-back validation |
 
 ## If something stops
 
-| Message | Fix |
+| Message | What to do |
 |---|---|
 | `database credentials missing` | step 3 |
-| `CTP_Opening_WIP has no shift-A sync on <day>` | the 06:30 stock of the plan day is not in the database yet; wait for the sync, or check the plan start |
-| `no PCR building plan in <folder>` | a file name must contain `building` and `pcr` |
+| `no PCR building plan in CTP_Schedule_BuildingPlan with plan_start on <day>` | the planner has not saved that day yet; the message lists the days the table holds |
+| `CTP_Opening_WIP: no shift-A sync on <day>` | the 06:30 sync is not in the database yet. Wait, or choose one: `--wip-sync "<updated_at>"` |
+| `... holds 1,644 rows, under 50% of the usual ... INCOMPLETE snapshot` | the 06:30 sync is partial. Raise it with PPDS, or choose a complete sync explicitly with `--wip-sync`. The summary records the choice |
+| `CTP_GT_Inventory PCR/TBR ...` | the same, with `--gt-sync-pcr` / `--gt-sync-tbr` |
 | `the data folder lacks ...` | run again with `--restage` |
+
+## The schedule in the database
+
+Every run writes its schedule to `JK_CTP_PPDS.CTP_Schedule_Floor`. Read it back with:
+
+```sql
+SELECT * FROM JK_CTP_PPDS.CTP_Schedule_Floor WHERE schedule_id = '<timestamp from SCHEDULE_ID.json>';
+```
+
+- `--no-db-write` skips the write.
+- Re-check a finished run: `python -m pipeline.persist_floor --run <run> --validate-only`.
+- Details: `docs/steps/12_persist_schedule_floor.md`.
+
+The login in `db.env` needs INSERT on that table, plus DELETE if you use `--replace`.

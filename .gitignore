@@ -14,3 +14,7 @@ __pycache__/
 venv/
 # office lock files
 ~$*
+# run logs
+logs/
+# phase-wise test reports (one folder per schedule_id, made by every run)
+phased-testing/reports/
